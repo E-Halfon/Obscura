@@ -1,0 +1,3 @@
+# Store and check out text files with LF line endings, on Windows too.
+# The OS image is built on Linux, and shell scripts and git hooks break with CRLF.
+* text=auto eol=lf

@@ -3,3 +3,14 @@ cosign.private
 /Containerfile
 *.iso
 *.iso-CHECKSUM
+
+# Camera Obscura: never commit secrets, firmware, ROMs, or OS images (ARCHITECTURE.md §14.2)
+*.key
+*.keys
+*.pem
+firmware/
+bios/
+keys/
+roms/
+*.img
+*.qcow2

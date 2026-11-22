@@ -1,0 +1,5 @@
+#!/usr/bin/env sh
+# Camera Obscura: block commits of firmware, BIOS, ROMs, keys, and OS images
+# (ARCHITECTURE.md §14.2). Enable once per clone with:
+#   git config core.hooksPath .githooks
+exec sh "$(git rev-parse --show-toplevel)/.claude/hooks/guard.sh" --staged
