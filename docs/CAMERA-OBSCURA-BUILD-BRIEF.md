@@ -1,9 +1,15 @@
 # Camera Obscura Systems — Build Brief
 
-**Version:** 5.0
-**Date:** 2026-10-15
-**Companion documents:** ARCHITECTURE.md v3.0 (design rationale — read that for *why*),
+**Version:** 5.1
+**Date:** 2026-11-21
+**Companion documents:** ARCHITECTURE.md v3.1 (design rationale — read that for *why*),
 PACKS.md (pack catalog and dependencies)
+
+**Changes from v5.0:** base OS decided — Universal Blue, built with BlueBuild, on the
+Aurora base image (§5); task 0.1 unblocked. The pocket computer is x86-64 and runs the same
+universal image, so task 2.3 is no longer an OS port. `windows-apps` and `android-apps`
+are provided by packs. "Foldable phone" renamed "pocket computer" throughout. R8 and R21
+closed.
 
 **Changes from v4.0:** the pack system, dispatcher, compatibility database, per-app
 overrides, typed action API, Plasma shell, Settings app shell, coprocessor interface, and
@@ -35,16 +41,16 @@ Build an **interactive project dashboard** from this document. Required views:
 4. **Test matrix** — from §7. Checkbox per test, pass/fail/blocked state, grouped by
    stage, gate tests visually distinct.
 5. **Capability matrix** — §2.2, which capabilities are present per build. `console-emu`
-   must render as **tiered** (§2.3), not a single flag, with the phone's tier 3–4 cells
+   must render as **tiered** (§2.3), not a single flag, with the pocket computer's tier 3–4 cells
    showing the `remote-compute` fallback rather than a bare ✘.
-6. **OS decision** — §5 comparison as side-by-side cards.
+6. **OS decision** — §5 as a decided record (Universal Blue Aurora), with the comparison
+   shown as side-by-side history cards.
 7. **Lifter-generator track** — Stage 0.5 tasks 0.5.5–0.5.8 with their **ordering rule
    made visually explicit**: the differential fuzzer (0.5.5) blocks everything after it,
    and T-62 is a go/no-go gate on continuing past 0.5.6. Show R14's 20-week timebox as a
    budget bar, not a footnote — it is the project's main schedule risk.
 8. **Stage 0 foundation track** — tasks 0.21–0.31 as a second parallel chain alongside
-   the Neo chain. Both must finish before 0.20 (integration). Mark 0.1 as **blocked by
-   the base-OS decision** until it is made.
+   the Neo chain. Both must finish before 0.20 (integration).
 9. **Stage 1.5** — settings assistant and automations, shown after the Stage 1 gate.
 
 **Design constraints:** dark theme. Dense, technical, no marketing gloss. A workbench
@@ -64,7 +70,7 @@ services authenticate against real silicon and cannot be reimplemented. Telephon
 capability, not a form factor: any build with a cellular module can make calls, desktop
 included. All coprocessors are treated as untrusted and have no network path except
 through an Obscura-controlled allowlist. One OS image; capabilities activate wherever the
-hardware exists. Three builds in sequence: desktop, thick laptop, foldable phone.
+hardware exists. Three builds in sequence: desktop, thick laptop, pocket computer.
 
 Every implementation is an installable **pack**, grouped into system bundles; a dispatcher
 picks the right pack per app, and the user can override it with right-click "Run with"
@@ -86,10 +92,10 @@ half-initialized services.
 
 ### 2.2 Capability matrix
 
-| Capability | Detection | Desktop | Laptop | Phone |
+| Capability | Detection | Desktop | Laptop | Pocket computer |
 |---|---|---|---|---|
-| `windows-apps` | always | ✔ | ✔ | ✔ |
-| `android-apps` | always | ✔ | ✔ | ✔ |
+| `windows-apps` | `pack-wine` installed and ready | ✔ | ✔ | ✔ |
+| `android-apps` | `pack-waydroid` installed and ready | ✔ | ✔ | ✔ |
 | `apple-coprocessor` | link peer responds | ✔ | ✔ | ✔ |
 | `telephony` | udev: modem on USB | ✔ (module) | ✔ | ✔ |
 | `console-emu` tier 1–2 | always (x86-64) | ✔ | ✔ | ✔ |
@@ -102,16 +108,16 @@ half-initialized services.
 
 ### 2.3 Console emulation tiers
 
-Tiering is required because emulation multiplies the workload 5–20x, and the phone's
+Tiering is required because emulation multiplies the workload 5–20x, and the pocket computer's
 6–9 W skin-limited budget cannot absorb that on an already-large base workload. Tiers 1–2
 run everywhere because their base workload is tiny. Tiers 3–4 route to `remote-compute`
-(Sunshine host / Moonlight client over WireGuard) on the phone — **the capability is
+(Sunshine host / Moonlight client over WireGuard) on the pocket computer — **the capability is
 present everywhere; only the execution site moves.**
 
 | Tier | Consoles | Technique |
 |---|---|---|
 | 1 | PS1, PSP | Full emulation, trivial cost |
-| 2 | PS2, GameCube | Full emulation, throttled on phone |
+| 2 | PS2, GameCube | Full emulation, throttled on the pocket computer |
 | 3 | PS3, Xbox 360 | Full emulation (RPCS3, Xenia) **or static recompilation (XenonRecomp)** |
 | 4 | PS4 | API reimplementation (shadPS4) — x86-64, no CPU translation |
 
@@ -134,9 +140,9 @@ PS5 and Xbox One/Series: nothing exists. Not a tier.
 | S9 | **Same image boots on a machine without a modem; telephony cleanly absent** | T-43 |
 | S10 | **Modem has no DMA and no route except through Obscura** | T-42 |
 | S11 | Laptop idles all day with all coprocessors asleep | T-20, T-21, T-44 |
-| S12 | Phone stays within skin-temperature limits under load | T-30 |
+| S12 | Pocket computer stays within skin-temperature limits under load | T-30 |
 | S13 | **One USB stick boots all three devices with correct capabilities, zero failed units** | T-50 |
-| S14 | **Console games launch by double-click; tier 3–4 reach the phone via `remote-compute`** | T-60, T-66 |
+| S14 | **Console games launch by double-click; tier 3–4 reach the pocket computer via `remote-compute`** | T-60, T-66 |
 | S15 | **The lifter generator is verified, not trusted — a known-wrong opcode is caught mechanically** | T-61, T-62 |
 | S16 | **No proprietary blob in the Android native path** | T-65 |
 | S17 | **Zero decompiled vendor binaries anywhere in the tree** | T-67 |
@@ -213,13 +219,13 @@ PS5 and Xbox One/Series: nothing exists. Not a tier.
 
 **Stage 1 subtotal: ~$1,000 – $2,100**
 
-### 4.3 Stage 2 — Foldable phone
+### 4.3 Stage 2 — Pocket computer
 
 > **Deliberately incomplete.** Do not commit until Stage 1 thermal and power data exists.
 
 | Part | Options to investigate | Est. USD | Notes |
 |---|---|---|---|
-| Obscura SoC | Qualcomm RB5 / SM8550 dev board; PinePhone Pro donor; Fairphone donor | 200–600 | Modem + mainline Linux support is the binding constraint |
+| Obscura compute | LattePanda Mu (N100/N150) on a custom carrier (ARCHITECTURE.md §9.1) | 200–600 | **x86-64** — runs the same universal image. Verify price |
 | Cellular module | M.2 or soldered, USB-attached | 60–150 | Band support must match target carrier |
 | Foldable panel | **Hardest single sourcing item** | 200–600 | Flexible OLED supply is not hobbyist-friendly |
 | Hinge | Custom machined | 150–500 | |
@@ -239,7 +245,7 @@ PS5 and Xbox One/Series: nothing exists. Not a tier.
 | 0.5 — Console + lifter track | 570 | 830 | 1,060 |
 | 1 — Laptop | 1,000 | 1,550 | 2,100 |
 | 1.5 — Assistant + automations | 0 | 0 | 0 |
-| 2 — Phone | 1,100 | 2,100 | 3,200+ |
+| 2 — Pocket computer | 1,100 | 2,100 | 3,200+ |
 | Contingency (25%) | 1,240 | 1,860 | 2,530 |
 | **Total** | **6,210** | **9,290** | **12,640+** |
 
@@ -252,17 +258,20 @@ not parts — which is precisely why R14 (schedule, not budget) is the risk that
 
 ## 5. Base OS decision
 
-### 5.0 ⚠ Reopened: NixOS vs Fedora Kinoite / Universal Blue
+### 5.0 Decided: Universal Blue Aurora, built with BlueBuild
 
-The GUI-first rule (ARCHITECTURE.md §19) reopened this decision. **It must be made before
-task 0.1.** Leaning **Kinoite / Universal Blue** (Plasma built in, atomic, GUI-driven
-updates, Bazzite's Steam/Proton/Waydroid head start). NixOS remains viable if the settings
-app owns all Nix configuration so users never see it. Full comparison: ARCHITECTURE.md §5.
+**Base image:** `ghcr.io/ublue-os/aurora`, `stable` stream, defined in `recipes/recipe.yml`
+and built with BlueBuild. Chosen over NixOS because the GUI-first rule (ARCHITECTURE.md
+§19) matters more than maximal reproducibility: Plasma built in, atomic updates and
+rollback, GUI-driven updates. Full comparison: ARCHITECTURE.md §5.
 
-Whichever is chosen: **one universal image, capabilities detected at runtime** — never
-per-host composition. That rule overrides the "each build is a composition" wording below.
+**One universal image, capabilities detected at runtime** — never per-host composition —
+for every build, the pocket computer included. That rule overrides the "each build is a
+composition" wording in the history below.
 
-### 5.1 Original recommendation: NixOS (kept for comparison)
+§5.1–§5.2 are kept as the record of the decision, not as open options.
+
+### 5.1 Original recommendation: NixOS (history)
 
 - The whole system is declared in a flake. Camera Obscura becomes *a set of Nix modules*,
   and each build is a composition of the capabilities its hardware supports — which is
@@ -274,7 +283,7 @@ per-host composition. That rule overrides the "each build is a composition" word
 
 **Cost:** steep curve; Nix's language is its own time sink. **Timebox: 3 weeks.**
 
-### 5.2 Alternatives
+### 5.2 Alternatives considered (history)
 
 | Option | For | Against |
 |---|---|---|
@@ -282,7 +291,7 @@ per-host composition. That rule overrides the "each build is a composition" word
 | **Fedora Silverblue / Universal Blue** | Immutable, ostree, closest shipping analogue; Bazzite bundles Wine/Proton | Less declarative; customization fights the image model |
 | **Arch** | Newest Wine/Mesa/kernel/ModemManager, best docs, AUR | Mutable, no rollback, drift across three machines |
 | **Debian minimal** | Boring, stable | Old packages — bad on the Wayland/Wine/telephony edge |
-| **Alpine / postmarketOS** | The realistic Stage 2 base; strongest mobile telephony story | Not suitable for Stages 0–1 |
+| **Alpine / postmarketOS** | Strongest mobile telephony story | Not suitable for Stages 0–1; moot for Stage 2 now that the pocket computer is x86-64 on the universal image |
 
 **Fallback:** if NixOS still costs more than it returns after 3 weeks, switch to Arch and
 accept drift. Shipping beats purity.
@@ -291,11 +300,12 @@ accept drift. Shipping beats purity.
 
 | Layer | Choice |
 |---|---|
+| Base | Universal Blue Aurora (`stable`), built with BlueBuild |
 | Desktop shell | KDE Plasma, stripped and themed |
 | Display | Wayland — KWin (draws decorations for mirrored windows) |
 | Audio | PipeWire — single clock domain, non-negotiable |
-| Windows | Wine + Proton, DXVK, VKD3D-Proton; hidden Windows VM (KVM/libvirt, FreeRDP RemoteApp) |
-| Android | Waydroid (LXC, mainline binder) |
+| Windows | `pack-wine`, `pack-proton` (Wine + Proton, DXVK, VKD3D-Proton); `pack-windows-vm` (KVM/libvirt, FreeRDP RemoteApp). Core supplies `binfmt_misc` and KVM |
+| Android | `pack-waydroid` (Waydroid, LXC). Core supplies mainline binder/binderfs |
 | Dispatch | `binfmt_misc` + dispatcher + compatibility database |
 | Packs | Pack manager daemon (DBus), signed packs and system bundles |
 | Settings plumbing | Typed action API (DBus) |
@@ -315,7 +325,7 @@ accept drift. Shipping beats purity.
 
 | ID | Task | Depends on | Est. weeks |
 |---|---|---|---|
-| 0.1 | **Base-OS decision**, then install + universal-image skeleton | decision | 3 |
+| 0.1 | **Universal-image skeleton:** BlueBuild recipe on Universal Blue Aurora (`stable`), signed image builds, boots on the desktop | — | 3 |
 | 0.2 | **Capability module framework** (udev → systemd → DBus) | 0.1 | 3 |
 | 0.3 | **KDE Plasma shell:** strip, theme, Windows-style layout | 0.1 | 2 |
 | 0.4 | Wine + binfmt_misc dispatch, `.exe` → window — **delivered as `pack-wine`** | 0.3, 0.21 | 3 |
@@ -385,7 +395,7 @@ proprietary-blob hole (R15). Everything else is capability expansion.
 
 | ID | Task | Depends on | Est. weeks |
 |---|---|---|---|
-| 1.1 | Framework mainboard bring-up, port Nix config | Stage 0 gate | 3 |
+| 1.1 | Framework mainboard bring-up on the universal image | Stage 0 gate | 3 |
 | 1.2 | Power instrumentation on all boards | 1.1 | 2 |
 | 1.3 | Internal link (USB4 board-to-board) | 1.1 | 4 |
 | 1.4 | Apple coprocessor deep-sleep + wake-on-demand | 1.3, 1.2 | 5 |
@@ -412,13 +422,13 @@ action API — nothing new is needed from the core. See ARCHITECTURE.md §21–�
 | 1.5.7 | Deterministic fast-path parser for common commands | 1.5.6 | 2 |
 | 1.5.8 | Ship default automations (all off): Night Mode, Docked, Low battery, On a call, Focus, Headphones | 1.5.3 | 1 |
 
-### Stage 2 — Phone (target: 12–18 months, low confidence)
+### Stage 2 — Pocket computer (target: 12–18 months, low confidence)
 
 | ID | Task | Depends on | Est. weeks |
 |---|---|---|---|
-| 2.1 | SoC + modem selection research | Stage 1 gate | 8 |
+| 2.1 | Carrier board + modem selection research | Stage 1 gate | 8 |
 | 2.2 | **Foldable panel sourcing — start during Stage 1** | — | 12 |
-| 2.3 | Base OS port (postmarketOS/Yocto), capability modules | 2.1 | 10 |
+| 2.3 | Bring-up on the universal image: drivers, capability modules, touch shell | 2.1 | 10 |
 | 2.4 | Hinge design + flex qualification | 2.2 | 10 |
 | 2.5 | Antenna design, fold-state aware | 2.4 | 6 |
 | 2.6 | Thermal model from Stage 1 data + margin | Stage 1 gate | 4 |
@@ -478,7 +488,7 @@ action API — nothing new is needed from the core. See ARCHITECTURE.md §21–�
 | T-63 | Undocumented-ISA run | Point the pipeline at an ISA with no formal spec | Definitions pass differential fuzzing against real hardware. Record coverage % — partial is a real result |
 | T-64 | Static recompile vs emulation | Run one XenonRecomp title and the same title under Xenia | Native build matches emulated behaviour; record the frame-rate and power delta |
 | T-65 🚪 | **Android ARM `.so` on x86-64** | Install an ARM-only Android app on Waydroid with **no proprietary bridge** | App runs. **This is the only architecturally load-bearing test on the track — see R15** |
-| T-66 | Tiered capability correctness | Boot on desktop, laptop, phone | Tiers 1–2 active everywhere; tiers 3–4 active only where a dGPU exists; `remote-compute` fills the gap on the phone |
+| T-66 | Tiered capability correctness | Boot on desktop, laptop, pocket computer | Tiers 1–2 active everywhere; tiers 3–4 active only where a dGPU exists; `remote-compute` fills the gap on the pocket computer |
 | T-67 | Clean-room audit | Review every input to the lifter generator | Every source is a public ISA manual or reference hardware. **Zero decompiled vendor binaries in the tree** |
 
 ### Stage 0 — foundation (packs, dispatcher, action API, Windows VM)
@@ -545,15 +555,15 @@ action API — nothing new is needed from the core. See ARCHITECTURE.md §21–�
 | R1 | Menu bar approach looks bolted-on, or takes 3× the estimate | Stage 0 slip | Prototype both in weeks 1–2 of task 0.13 |
 | R2 | Neo board bricked during headless / parts-pairing work | $600 + weeks | **Spare board budgeted from day one.** Never experiment on the only unit |
 | R3 | Neo demands a real battery management IC, not a bare rail | Stage 1 redesign | Characterize on the bench in 0.7, not in the laptop |
-| R4 | Coprocessor never reliably reaches deep sleep | Kills phone viability | T-20 is a hard gate; power instrumentation from day one |
+| R4 | Coprocessor never reliably reaches deep sleep | Kills pocket-computer viability | T-20 is a hard gate; power instrumentation from day one |
 | R5 | macOS update breaks the ScreenCaptureKit agent or TCC grants | Recurring outage | Pin macOS version; test updates on the spare board first |
 | R6 | Foldable panel unsourceable at hobbyist scale | Stage 2 blocked | Start 2.2 during Stage 1, not after |
-| R7 | Phone thermals exceed budget after CNC | Unrecoverable | Add margin to Stage 1 figures; validate on a printed chassis |
-| R8 | NixOS learning curve eats months | Schedule slip | 3-week timebox, then Arch |
+| R7 | Pocket-computer thermals exceed budget after CNC | Unrecoverable | Add margin to Stage 1 figures; validate on a printed chassis |
+| R8 | ~~NixOS learning curve eats months~~ | — | **Closed:** base OS is Universal Blue (§5) |
 | R9 | Apple changes activation or service endpoints | Feature loss | Log all traffic; keep libimobiledevice/BlueBubbles fallbacks documented |
 | **R10** | **Carrier refuses IMS to the module's IMEI** | **No voice calls at all** | **Buy two modules (SIMCom + Quectel). Test with a real SIM in task 0.17, early. If both fail, voice may need a SIP bridge over data instead** |
 | **R11** | **M.2 modem turns out PCIe/MHI, not USB** | **DMA exposure; violates principle 4** | **Verify attachment before purchase; `lsusb` vs `lspci` on arrival is T-42** |
-| **R12** | **Modem keeps the host awake in standby** | **Battery target missed** | **T-27 quantifies it on the laptop, before the phone depends on it** |
+| **R12** | **Modem keeps the host awake in standby** | **Battery target missed** | **T-27 quantifies it on the laptop, before the pocket computer depends on it** |
 | **R13** | **eUICC card keys stop permitting third-party LPAs** | **eSIM path closes** | **Physical SIM is the Stage 0 baseline; eSIM stays optional. Verify before buying cards** |
 | **R14** | **The lifter generator eats the project** | **Stage 1 and 2 never happen** | **Hardest risk on the board — generality is where tooling projects die. Timebox 0.5.5–0.5.7 to 20 weeks total. T-62 is the go/no-go: if the method can't regenerate a known-good spec, stop. Stage 1 does not wait on this track** |
 | **R15** | **No clean-room path for ARM `.so` on x86-64** | **`android-apps` permanently depends on an abandoned proprietary blob** | **T-65 is the measure. If 0.5.8 fails, document the gap honestly in the capability matrix rather than shipping libhoudini silently — it contradicts tenet 2** |
@@ -562,7 +572,7 @@ action API — nothing new is needed from the core. See ARCHITECTURE.md §21–�
 | **R18** | **Pack API v1 is wrong** | **Every pack needs rework later** | **Build Wine, Waydroid, the Neo, and the VM as packs from day one so v1 is tested by real use; version the API from the start** |
 | **R19** | **UI, assistant, and automation work crowds out the core** | **Stage 0 slips; nothing runs foreign software** | **Only the action API, Settings shell, and pack GUI are Stage 0. The assistant and automations wait for Stage 1.5** |
 | R20 | No usable GPU acceleration for the VM on the laptop | SolidWorks laptop-local not possible | Second GPU on desktop; SR-IOV evaluated in 0.30; laptop routes to desktop via `remote-compute` |
-| R21 | Base-OS decision churns | Stage 0 can't start | Decide before 0.1; whichever is chosen, the 3-week timebox applies |
+| R21 | ~~Base-OS decision churns~~ | — | **Closed:** decided — Universal Blue Aurora (§5) |
 | R22 | Small model is unreliable at tool calls | Wrong settings changed | Constrained decoding, deterministic fast path, undo on every action, confirm-tier for anything consequential |
 
 ---
@@ -585,7 +595,7 @@ action API — nothing new is needed from the core. See ARCHITECTURE.md §21–�
 - **The lifter generator is a lifter generator, not a recompiler.** Lifting is ~10–20% of a
   static-recompilation project; the runtime/HLE layer is the rest.
 - macOS 26 Tahoe is the last Intel release; the Neo is the only board with a future.
-- Steady-state phone thermal is bound by **skin area, not volume**.
+- Steady-state pocket-computer thermal is bound by **skin area, not volume**.
 - **Every implementation is a pack**; no platform is hardcoded into the core.
 - **No normal task may require a terminal.**
 - **The settings assistant is local, takes input only from the Settings text box, and acts

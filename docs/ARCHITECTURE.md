@@ -1,8 +1,8 @@
 # Camera Obscura Systems — Architecture
 
-**Status:** design phase, pre-implementation
-**Version:** 3.0
-**Last updated:** 2026-10-15
+**Status:** Stage 0 in progress
+**Version:** 3.1
+**Last updated:** 2026-11-21
 **Companion documents:** CAMERA-OBSCURA-BUILD-BRIEF.md (plan), PACKS.md (pack catalog)
 
 > **If you are an AI assistant reading this at the start of a session:** this document is
@@ -60,7 +60,7 @@ remove legal exposure (§14) — open-source distribution is exactly where it ar
 - Run hardware whose drivers only ship for other OSes
 - Use libraries that have no Linux equivalent
 
-**Target hardware:** three builds, in order — desktop, thick laptop, foldable phone.
+**Target hardware:** three builds, in order — desktop, thick laptop, pocket computer.
 **One OS image across all three.** Capabilities activate wherever the hardware exists.
 
 ---
@@ -77,8 +77,8 @@ remove legal exposure (§14) — open-source distribution is exactly where it ar
 4. **Coprocessors are untrusted.** Obscura's central job is arbitrating between black
    boxes it cannot audit — the Apple board and the cellular baseband are two instances of
    one pattern, and both get the same treatment (§9).
-5. **One transport abstraction.** Desktop uses a cable, laptop an internal bus, phone a
-   hinge flex. Nothing above the transport layer may care which.
+5. **One transport abstraction.** Desktop uses a cable, laptop an internal bus, pocket
+   computer a hinge flex. Nothing above the transport layer may care which.
 6. **Reimplement locally, never impersonate remotely.** See §3.
 7. **Every implementation is a pack.** Wine, Waydroid, the Neo, emulators — none are
    hardcoded into the core. Built-ins use the same pack format a future PS6 pack would (§17).
@@ -138,14 +138,17 @@ activates, and the UI surfaces it exposes. Nothing more.
 
 | Capability | Detection | Activates | Present on |
 |---|---|---|---|
-| `windows-apps` | always | Wine, binfmt_misc `MZ` handler | all |
-| `android-apps` | always | Waydroid, LXC | all |
+| `windows-apps` | `pack-wine` installed and ready | provided by `pack-wine` (Wine, its binfmt_misc `MZ` registration) | all |
+| `android-apps` | `pack-waydroid` installed and ready | provided by `pack-waydroid` (Waydroid, LXC) | all |
 | `apple-coprocessor` | link peer responds | mirror client, virtual cam/audio, allowlist | opt-in per build |
 | `telephony` | udev: modem on USB | ModemManager, voice audio bridge, dialer | opt-in per build |
-| `battery` | `/sys/class/power_supply` | power arbitration, sleep policy | laptop, phone |
-| `touch` | udev: touchscreen | touch input, on-screen keyboard | phone |
+| `battery` | `/sys/class/power_supply` | power arbitration, sleep policy | laptop, pocket computer |
+| `touch` | udev: touchscreen | touch input, on-screen keyboard | pocket computer |
 | `gps` | ModemManager or udev | location service (portal-gated) | opt-in |
 | `camera` | udev: UVC or CSI | camera portal, virtual cam source | most |
+
+`windows-apps` and `android-apps` come from packs, not the core (§17.4). The core supplies
+only the kernel-level support they sit on: binder/binderfs, KVM, and `binfmt_misc`.
 
 **Implementation:** udev detects → systemd activates the unit → the DBus interface
 appears → the UI surface becomes reachable. This is how ModemManager already behaves:
@@ -157,7 +160,16 @@ build time. Per-host composition (e.g. one NixOS flake per device) fails the fla
 test: copy the image to a USB stick, boot it on any of the three devices, and it must
 work. The image therefore needs a generic kernel with `MODULES=most` in initramfs, both
 `amdgpu` and `i915`/`xe`, UUID/LABEL mounts (never `/dev/sdX`), no hardware-specific kernel
-parameters, UEFI boot, and all firmware bundled. This is how live ISOs already work.
+parameters, UEFI boot, and all **hardware firmware** bundled. This is how live ISOs already
+work.
+
+**Two kinds of firmware — never confuse them:**
+- **Hardware firmware** — `linux-firmware` blobs for GPUs, Wi-Fi, Bluetooth, and similar
+  devices. Redistributable; shipped in the image through Fedora packages.
+- **Platform firmware** — console and system firmware, BIOS files, keys. Never shipped in
+  the image or any pack; the user supplies it (§14.2, §17.1).
+
+Neither kind is ever committed to the repo.
 
 **Architecture: x86-64 on every device.** AMD vs Intel is not an OS boundary — both
 drivers ship in the image. ARM is rejected (§11): Wine would need translation and the
@@ -170,9 +182,14 @@ error dialogs, no half-initialized services. Absence is the correct state.
 
 ## 5. Base OS
 
-### ⚠ Open decision: NixOS vs Fedora Kinoite / Universal Blue
+**Decided: Universal Blue, built with BlueBuild, on the Aurora base image**
+(`ghcr.io/ublue-os/aurora`, `stable` stream). Aurora is Universal Blue's KDE Plasma image;
+`recipes/recipe.yml` is the OS definition. See §11.
 
-The GUI-first rule (§19) reopened this. **Decide before Stage 0 task 0.1.**
+### History: the NixOS vs Fedora Kinoite / Universal Blue comparison
+
+The GUI-first rule (§19) reopened the earlier NixOS choice. This comparison decided it and
+is kept as the record of why.
 
 | | NixOS | Fedora Kinoite / Universal Blue (Aurora, Bazzite) |
 |---|---|---|
@@ -184,19 +201,19 @@ The GUI-first rule (§19) reopened this. **Decide before Stage 0 task 0.1.**
 | Head start on packs | Packages exist | Bazzite already ships Steam, Proton, Waydroid integration |
 | Learning cost | High; 3-week timebox | Lower |
 
-**Leaning: Kinoite / Universal Blue**, because the user-facing goals (§19) matter more than
-maximal reproducibility. If NixOS is chosen anyway, the 3-week timebox stands, and the
-settings app must own all Nix configuration so users never see it.
+**Outcome: Universal Blue**, because the user-facing goals (§19) matter more than
+maximal reproducibility.
 
-Stage 2 likely needs postmarketOS/Alpine or a Yocto image; expect to port, not reuse.
+The pocket computer is x86-64 and runs the same universal image (§4).
 
 | Layer | Choice |
 |---|---|
+| Base | **Universal Blue Aurora** (`stable`), built with BlueBuild |
 | Desktop shell | **KDE Plasma**, stripped and themed (§19) |
 | Display | Wayland — **KWin**, which draws decorations for mirrored windows. The custom wlroots compositor is no longer needed |
 | Audio | PipeWire — single clock domain, non-negotiable |
-| Windows | Wine + Proton, DXVK, VKD3D-Proton |
-| Android | Waydroid (LXC, mainline binder) |
+| Windows | `pack-wine`, `pack-proton` (Wine + Proton, DXVK, VKD3D-Proton); core supplies `binfmt_misc` and KVM |
+| Android | `pack-waydroid` (Waydroid, LXC); core supplies mainline binder/binderfs |
 | Dispatch | `binfmt_misc` + dispatcher + compatibility database (§18) |
 | Packs | Pack manager daemon over DBus; signed packs and system bundles (§17) |
 | Settings plumbing | Typed action API as DBus services (§20) |
@@ -371,7 +388,7 @@ module physically where possible.
 
 ### 9.1 Per-build differences
 
-| | Desktop | Laptop | Phone |
+| | Desktop | Laptop | Pocket computer |
 |---|---|---|---|
 | Compute | AMD Ryzen 8700G/9600X mini-ITX | Framework 13 AMD mainboard | LattePanda Mu (N100/N150), 200-pin SO-DIMM, open KiCad carrier files |
 | Apple link | 2.5GbE direct, no switch | internal USB 3.2 Gen 2 | USB 3.2 Gen 2 over hinge flex |
@@ -380,7 +397,7 @@ module physically where possible.
 | Coprocessor display | real monitor available | headless | headless |
 | Thermal budget | irrelevant | moderate | **6–9 W total, skin-limited** |
 
-**Ethernet through a hinge is not mechanically realistic** — the phone's Apple link goes
+**Ethernet through a hinge is not mechanically realistic** — the pocket computer's Apple link goes
 over flex, carrying video, audio, and networking on one bus.
 
 **USB4/Thunderbolt is not required.** HEVC window streams are ~20 Mbps each; USB 3.2 Gen 2's
@@ -411,7 +428,7 @@ isolation is holding.
 
 GarageBand is pure local computation. Install, then block entirely.
 
-### 9.3 Thermal reality (phone)
+### 9.3 Thermal reality (pocket computer)
 
 Steady-state dissipation is bound by **skin area, not volume** — roughly **6–9 W
 continuous for the whole device**, both SoCs, both displays, radio, everything. Extra
@@ -645,8 +662,9 @@ stays inside portable devices (small, ~1 W); the Switch belongs in a home coproc
 - Cellular telephony as an optional capability on every form factor, desktop included
 - Modem attached over USB; IMS handled inside modem firmware
 - All coprocessors untrusted; default-deny outbound; Obscura as sole route
-- ~~NixOS for Stages 0–1~~ → **reopened: NixOS vs Fedora Kinoite / Universal Blue (§5)**
-- Build order: desktop → thick laptop → foldable phone
+- ~~NixOS for Stages 0–1~~ → reopened (§5) → **Universal Blue, built with BlueBuild, on the
+  Aurora base image (`stable`), for every build including the pocket computer (§5)**
+- Build order: desktop → thick laptop → pocket computer
 - **Mission statement and three-tier model (§0)**
 - **x86-64 on every device; AMD and Intel both supported; one universal image with
   runtime capability detection (§4)**
@@ -674,7 +692,7 @@ stays inside portable devices (small, ~1 W); the Switch belongs in a home coproc
 | iOS app support | FairPlay encryption; DMCA §1201; UIKit unimplemented |
 | Hackintosh (Intel) | Tahoe is last Intel release; macOS 27 ASi-only; EOL ~fall 2028 |
 | VMware / VirtualBox macOS | No Metal-capable virtual GPU; same EOL |
-| Mac mini M4 board in phone | ~110 mm board, 50 mm stack, 4–7 W idle, needs a fan |
+| Mac mini M4 board in pocket computer | ~110 mm board, 50 mm stack, 4–7 W idle, needs a fan |
 | Donor iPhone board | **iOS has no headless mode**; secure boot; activation |
 | Windows `.sys` in Linux kernel | See §10 |
 | **Host-side IMS/SIP stack** | **Unimplemented across mobile Linux; use modem firmware** |
@@ -724,8 +742,8 @@ stays inside portable devices (small, ~1 W); the Switch belongs in a home coproc
    unit; **budget a spare board for the one killed learning.**
 6. **Modem power arbitration.** Cellular standby on a device that also sleeps an Apple
    coprocessor — two independent low-power domains that must not wake each other.
-7. **Cross-ISA TSO.** Only if x86 apps ever run on ARM: x86 is TSO, ARM weakly ordered.
-   Naive translation breaks nondeterministically. Apple used a hardware TSO mode;
+7. ~~**Cross-ISA TSO.**~~ **Closed: §11 rejects ARM for every build, so x86 apps never run
+   on ARM.** Kept for the record: x86 is TSO, ARM weakly ordered. Naive translation breaks nondeterministically. Apple used a hardware TSO mode;
    FEX/box64 use barriers (slow) or LSE atomics (gaps). Note the reverse direction
    (ARM→x86, §10.5.4) is the easy one — translating *to* a stronger model.
 8. **Android native bridge.** ARM-only `.so` files on an x86-64 host currently require
@@ -735,7 +753,7 @@ stays inside portable devices (small, ~1 W); the Switch belongs in a home coproc
 9. **Whether the lifter generator beats existing formal specs.** For mainstream ISAs,
    Sail/ASL/SLEIGH already exist and are correct by construction. The method must prove
    itself on an undocumented ISA to justify the effort. **Unproven until T-62 passes.**
-10. **Base OS choice.** NixOS vs Fedora Kinoite / Universal Blue (§5). Blocks Stage 0 task 0.1.
+10. ~~**Base OS choice.**~~ **Closed: Universal Blue Aurora, built with BlueBuild (§5, §11).**
 11. **GPU acceleration for the Windows VM.** Second GPU vs SR-IOV. Decides whether
     SolidWorks runs locally on the laptop at all.
 12. **Pack API stability.** The pack interface is the contract that must outlive any
@@ -765,22 +783,22 @@ The settings assistant (§21) and automation engine (§22) are **in scope but bu
 (Stage 1.5). They need nothing new from the core except the action API, which is why the
 action API has to exist in Stage 0.
 
-**Stage 1 — Thick laptop.** Adds what the desktop cannot teach: real power budget, thermal
-arbitration across two coprocessors, suspend/resume across the link, battery authority,
-cellular standby drain. **Instrument the power path from day one.** The likely failure is
-a coprocessor that never reliably reaches deep sleep, invisible without measurement.
-
 **Stage 0.5 — Console emulation and static recompilation.** After the desktop passes its
 gates, before the laptop. Low-risk, touches nothing load-bearing, and a good break between
 the ScreenCaptureKit agent and the laptop's power engineering. Covers emulator integration,
 `binfmt_misc` dispatch for SELF/EBOOT/XEX, XenonRecomp evaluation, and the first phase of
 the lifter generator (§10.5.3) — **differential fuzzer first.**
 
+**Stage 1 — Thick laptop.** Adds what the desktop cannot teach: real power budget, thermal
+arbitration across two coprocessors, suspend/resume across the link, battery authority,
+cellular standby drain. **Instrument the power path from day one.** The likely failure is
+a coprocessor that never reliably reaches deep sleep, invisible without measurement.
+
 **Stage 1.5 — Settings assistant and automations.** After the laptop gates, because the
 call automations and power automations need the laptop's battery and telephony behavior
 to be real. Both are packs built on the Stage 0 action API.
 
-**Stage 2 — Foldable phone.** The only stage where a wrong call is unrecoverable — chassis
+**Stage 2 — Pocket computer.** The only stage where a wrong call is unrecoverable — chassis
 and hinge are machined before final firmware thermals are known. Add margin.
 
 **Stage 3 — Hardening (later).** Update delivery for sealed devices, LUKS + TPM unlock,
@@ -821,8 +839,11 @@ its reliance on Switch encryption keys.
 
 ### 14.2 The four rules that keep the repo distributable
 
-1. **Never put keys, firmware, BIOS files, OS images, or decryption code in the repo or in
-   any pack.** Packs declare them by name and checksum; the user supplies them.
+1. **Never put keys, platform firmware, BIOS files, OS images, or decryption code in the
+   repo or in any pack.** Packs declare them by name and checksum; the user supplies them.
+   *Platform firmware* means console and system firmware, BIOS files, and keys. *Hardware
+   firmware* (`linux-firmware` blobs) is redistributable and ships in the image through
+   Fedora packages (§4) — but it, too, is never committed to the repo.
 2. **Never commit decompiled vendor code**, including AI-decompiled output.
 3. **Per-title recompilation packs ship the recompiler and runtime only.** The game file
    comes from the user (the N64Recomp model).
@@ -950,6 +971,9 @@ marked "not on this device" (e.g. no Windows VM on the pocket computer) so it sh
 
 - **Every implementation is a pack, including the built-ins.** If Wine, Waydroid, and the
   Neo use the same format as a future PS6 pack, the format is tested by real use.
+- **The image may ship packs preinstalled, but they remain real packs** — each with a
+  manifest, and the pack manager can update or remove them like any other. The core holds
+  only kernel-level support: binder/binderfs, KVM, and `binfmt_misc`.
 - **The pack API is the stable contract.** Versioned from day one (`api = 1`). It must
   outlive any individual emulator.
 - **Packs depend on core services, not on each other** — except one level deep on runtime
@@ -1002,9 +1026,16 @@ installer type) and picks a pack. **Order of precedence:**
 3. **The compatibility database** entry for this app
 4. **The bundle's default order** (e.g. Wine → Windows VM → remote)
 
+**Only installed and ready packs take part.** Every level of the order is filtered to
+packs that are installed and report Ready (or Remote) on this device (§17.3); an entry
+naming a pack that isn't installed is skipped.
+
 The user's choices always win; the compatibility database is a recommendation, never a
-lock. If the chosen pack isn't ready on this device, the dispatcher falls back to the next
-option and says why.
+lock. If the chosen pack fails or isn't ready on this device, the dispatcher falls back to
+the next installed, ready option and says why. When the next pack in the bundle's order
+isn't installed, the readiness message offers to install it (e.g. "Wine couldn't run this.
+Install the Windows VM pack?") rather than choosing it silently. `pack-windows-vm` stays an
+optional pack (§17.2); nothing installs it without the user agreeing.
 
 ### 18.3 "Run with" and overrides
 
