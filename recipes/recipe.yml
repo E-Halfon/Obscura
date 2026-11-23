@@ -15,13 +15,15 @@ image-version: stable
 # you can include multiple instances of the same module
 modules:
   # obscura-capd (ARCHITECTURE.md §4) is Python on dasbus; python3-systemd gives it
-  # structured journal entries.
+  # structured journal entries. vulkan-tools provides vulkaninfo for the vulkan-1.3
+  # probe (task 0.2b); Aurora's base ships mesa-vulkan-drivers but not vulkan-tools.
   - type: dnf
     install:
       packages:
         - python3-dasbus
         - python3-gobject-base
         - python3-systemd
+        - vulkan-tools
 
   - type: files
     files:

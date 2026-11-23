@@ -1,0 +1,15 @@
+# Camera Obscura capability: vulkan-1.3 (ARCHITECTURE.md §4).
+# Active = present, inactive = absent. Never "failed".
+# Upheld only by an active obscura-cap-vulkan-1.3-probe@<renderDN>.service, which udev
+# (70-obscura-cap-vulkan-1.3.rules) starts per render node and which becomes active only
+# when that node has a hardware-accelerated Vulkan 1.3 device. When the last such probe
+# stops (its GPU went away; BindsTo= on the device), nothing upholds this target and
+# StopWhenUnneeded stops it, without a reboot. Manual start and stop are refused so the
+# state can't be faked. Units that belong to this capability use PartOf= and WantedBy=
+# this target and must never Requires= or Wants= it.
+[Unit]
+Description=Obscura capability: Hardware-accelerated Vulkan 1.3 on an integrated or discrete GPU
+Documentation=file:/usr/share/obscura/capabilities.d/vulkan-1.3.toml
+StopWhenUnneeded=yes
+RefuseManualStart=yes
+RefuseManualStop=yes

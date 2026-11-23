@@ -26,7 +26,27 @@ to write inside a git checkout. Review the output, copy the `real-*.json` files 
 add a row for each. Put the `nodes.json` render-node map in the Notes column (or alongside,
 as `real-<label>-nodes.json`).
 
+## Scenarios
+Files group into scenarios by label: `<origin>-<label>-gpu<n>-<driver>-<api>.json` (one per
+Vulkan device, as `capture.py` writes them) plus `<origin>-<label>-nodes.json` (the render
+nodes). A scenario is real only if every one of its files is marked real.
+
 ## Files
 
 | File | Origin | Source | Purpose |
 |---|---|---|---|
+| `synthetic-radv-lavapipe-gpu0-radv-1.4.json` | synthetic | hand-written, task 0.2b | RADV discrete GPU on renderD128: accepted for its own node only |
+| `synthetic-radv-lavapipe-gpu1-llvmpipe-1.4.json` | synthetic | hand-written, task 0.2b | lavapipe alongside it: never counts |
+| `synthetic-radv-lavapipe-nodes.json` | synthetic | hand-written, task 0.2b | render node map |
+| `synthetic-discrete-integrated-gpu0-radv-1.4.json` | synthetic | hand-written, task 0.2b | discrete GPU on renderD128 |
+| `synthetic-discrete-integrated-gpu1-intel-open-source-mesa-driver-1.4.json` | synthetic | hand-written, task 0.2b | integrated GPU on renderD129 |
+| `synthetic-discrete-integrated-nodes.json` | synthetic | hand-written, task 0.2b | render node map |
+| `synthetic-venus-virtual-gpu0-venus-1.3.json` | synthetic | hand-written, task 0.2b | virtio-gpu Venus, `VIRTUAL_GPU` with a DRM node: rejected |
+| `synthetic-venus-virtual-gpu1-llvmpipe-1.4.json` | synthetic | hand-written, task 0.2b | lavapipe in the same guest: rejected |
+| `synthetic-venus-virtual-nodes.json` | synthetic | hand-written, task 0.2b | render node map |
+| `synthetic-radv-no-drm-ext-gpu0-radv-1.4.json` | synthetic | hand-written, task 0.2b | a GPU without `VkPhysicalDeviceDrmPropertiesEXT`: rejected |
+| `synthetic-radv-no-drm-ext-nodes.json` | synthetic | hand-written, task 0.2b | render node map |
+| `synthetic-gpu-api-1.2-gpu0-intel-open-source-mesa-driver-1.2.json` | synthetic | hand-written, task 0.2b | device apiVersion 1.2 under a 1.3 profile version: rejected |
+| `synthetic-gpu-api-1.2-nodes.json` | synthetic | hand-written, task 0.2b | render node map |
+| `synthetic-wrong-type-other-gpu0-radv-1.3.json` | synthetic | hand-written, task 0.2b | device type `OTHER`: rejected |
+| `synthetic-wrong-type-other-nodes.json` | synthetic | hand-written, task 0.2b | render node map |

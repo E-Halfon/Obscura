@@ -121,13 +121,15 @@ to connect one.
 
 **Kind** says how the capability is detected: **static** (a fixed fact checked at boot),
 **device** (udev; appears and disappears with hotplug), **probe** (a peer answers over a
-link). The first three implemented are `virt`, `battery`, and `camera` (build-brief task 0.2).
+link). The first three implemented are `virt`, `battery`, and `camera` (build-brief task 0.2);
+task 0.2b adds `x86-64-v3` (static: CPU-feature conditions checked at boot) and
+`vulkan-1.3` (device: a probe per GPU render node, so it follows GPU hotplug).
 
 | Capability | Kind | Attachable | Meaning | D | L | P |
 |---|---|---|---|---|---|---|
 | `x86-64-v3` | static | no | AVX2, BMI2, FMA | ✔ | ✔ | ✔ |
 | `avx512` | static | no | AVX-512 (helps RPCS3) | ✔ Zen 4/5 | ✔ Zen 4 | ✘ |
-| `vulkan-1.3` | static | no | Vulkan 1.3 via Mesa (RADV/ANV) | ✔ | ✔ | ✔ |
+| `vulkan-1.3` | device | no | Hardware-accelerated Vulkan 1.3 on an integrated or discrete GPU (RADV/ANV/NVK). CPU (llvmpipe/lavapipe), virtual and other devices don't count | ✔ | ✔ | ✔ |
 | `dgpu` | device | no | Discrete GPU | ✔ | ✘ | ✘ |
 | `virt` | device | no | AMD-V / VT-x, usable by KVM (`/dev/kvm` exists) | ✔ | ✔ | ✔ |
 | `iommu` | static | no | AMD-Vi / VT-d with usable groups | ✔ | ✔ | ✔ |
