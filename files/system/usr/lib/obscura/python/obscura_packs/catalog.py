@@ -9,7 +9,11 @@ ARCHITECTURE.md §17.1:
 
 An installed `current` wins over the factory copy. A broken `current` falls back to the
 factory copy and is reported. Only factory packs may be runtime packs (`runtime = true`)
-until signed repository packs (task 0.23); an installed one falls back to the factory copy. Every bad manifest is reported and skipped; it never stops
+until signed repository packs (task 0.23); an installed one falls back to the factory copy.
+
+Not yet checked: pack signatures (ARCHITECTURE.md §17.4). Factory packs are covered by the
+image's signature. Installed packs are trusted as they are until task 0.23 adds signature
+verification here and in the pack manager. Every bad manifest is reported and skipped; it never stops
 the others from loading.
 """
 
