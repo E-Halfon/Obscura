@@ -126,7 +126,14 @@ class CapdDBusTest(dbusmock.DBusTestCase if dbus is not None else unittest.TestC
             env=self.environment(), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
         )
         self.addCleanup(self.stop_process, self.capd)
-        wait_for(lambda: self.system_bus.name_has_owner(BUS_NAME), "capd owns " + BUS_NAME)
+        try:
+            wait_for(lambda: self.system_bus.name_has_owner(BUS_NAME), "capd owns " + BUS_NAME)
+        except AssertionError as error:
+            # Show why capd didn't come up (it may have crashed or be stuck).
+            self.stop_process(self.capd)
+            output = self.capd.stdout.read() if self.capd.stdout else ""
+            raise AssertionError(str(error) + "; capd exit status " + str(self.capd.returncode)
+                                 + "; capd output:\n" + (output or "(none)")) from None
 
     def start_watch(self):
         """obscura-cap watch in the background; its lines go to a queue."""
