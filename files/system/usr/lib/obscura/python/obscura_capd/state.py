@@ -62,6 +62,22 @@ class PresenceTable:
             report.failure("PresenceTable.__init__", error)
             raise
 
+    def transition_for(self, name, present):
+        """What update() would return, without changing anything. Lets the caller publish
+        first and commit to the table only once publishing has succeeded."""
+        try:
+            if name not in self._names:
+                raise KeyError("undeclared capability " + repr(name))
+            was_present = name in self._since
+            if present and not was_present:
+                return "added"
+            if not present and was_present:
+                return "removed"
+            return None
+        except Exception as error:
+            report.failure("PresenceTable.transition_for", error)
+            raise
+
     def update(self, name, present, since):
         """Record a reading. Returns "added", "removed", or None if nothing changed."""
         try:

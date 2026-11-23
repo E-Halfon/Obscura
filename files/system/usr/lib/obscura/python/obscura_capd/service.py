@@ -173,9 +173,10 @@ class Manager(ObjectManager):
 
 
 class Exporter:
-    """Publishes and removes capability objects as the presence table changes, then
-    signals. Order matters: an object exists before Added is sent, and is gone before
-    Removed is sent, so a client reacting to either signal sees a consistent tree."""
+    """Publishes and removes capability objects, then signals. The mirror calls apply(),
+    commits to the presence table only if apply() succeeded, then calls announce().
+    So an object exists before Added is sent and is gone before Removed is sent, and a
+    failed publish leaves the table untouched for the next resync to retry."""
 
     def __init__(self, bus, manager, vocabulary, table):
         try:
@@ -187,23 +188,35 @@ class Exporter:
             report.failure("Exporter.__init__", error)
             raise
 
-    def on_transition(self, name, transition):
+    def apply(self, name, transition, since):
+        """Publish or unpublish the capability's object. Raises if that fails."""
         try:
             path = object_path_for(name)
-            declaration = self._vocabulary[name]
             if transition == "added":
-                since = self._table.since(name)
-                self._bus.publish_object(path, Capability(declaration, since))
-                self._manager.InterfacesAdded.emit(path, {CAPABILITY_INTERFACE: capability_properties(declaration, since)})
+                self._bus.publish_object(path, Capability(self._vocabulary[name], since))
+            elif transition == "removed":
+                self._bus.unpublish_object(path)
+            else:
+                raise ValueError("unknown transition " + repr(transition))
+        except Exception as error:
+            report.failure("Exporter.apply", error)
+            raise
+
+    def announce(self, name, transition, since):
+        """Send the signals for a transition that apply() already made. A failure here is
+        reported; the published state is already consistent with the table."""
+        try:
+            path = object_path_for(name)
+            if transition == "added":
+                properties = capability_properties(self._vocabulary[name], since)
+                self._manager.InterfacesAdded.emit(path, {CAPABILITY_INTERFACE: properties})
                 self._manager.Added.emit(name)
                 report.notice("capability present: " + name, OBSCURA_CAPABILITY=name)
             elif transition == "removed":
-                self._bus.unpublish_object(path)
                 self._manager.InterfacesRemoved.emit(path, [CAPABILITY_INTERFACE])
                 self._manager.Removed.emit(name)
                 report.notice("capability absent: " + name, OBSCURA_CAPABILITY=name)
             else:
                 raise ValueError("unknown transition " + repr(transition))
         except Exception as error:
-            report.failure("Exporter.on_transition", error)
-            raise
+            report.failure("Exporter.announce", error)

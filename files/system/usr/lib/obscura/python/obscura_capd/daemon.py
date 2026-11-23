@@ -41,7 +41,7 @@ def main():
 
         # Sync with systemd before claiming the bus name, so the first caller (often the
         # one that DBus-activated us) already sees the real state.
-        mirror = SystemdMirror(bus.connection, vocabulary, table, exporter.on_transition)
+        mirror = SystemdMirror(bus.connection, vocabulary, table, exporter)
         mirror.start()
         bus.register_service(BUS_NAME)
 

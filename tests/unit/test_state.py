@@ -49,6 +49,14 @@ class PresenceTableTest(unittest.TestCase):
         self.assertIsNone(self.table.update("camera", False, 0))
         self.assertEqual(self.table.since("camera"), 0)
 
+    def test_transition_for_does_not_commit(self):
+        self.assertEqual(self.table.transition_for("camera", True), "added")
+        self.assertFalse(self.table.is_present("camera"))
+        self.assertIsNone(self.table.transition_for("camera", False))
+        self.table.update("camera", True, 7)
+        self.assertEqual(self.table.transition_for("camera", False), "removed")
+        self.assertTrue(self.table.is_present("camera"))
+
     def test_lists_are_sorted(self):
         self.table.update("virt", True, 1)
         self.table.update("battery", True, 2)

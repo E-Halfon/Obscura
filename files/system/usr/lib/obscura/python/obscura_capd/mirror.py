@@ -26,13 +26,13 @@ _CALL_TIMEOUT_MS = 10000
 
 
 class SystemdMirror:
-    def __init__(self, connection, vocabulary, table, on_transition):
+    def __init__(self, connection, vocabulary, table, exporter):
         """`connection` is a Gio.DBusConnection to the system bus (dasbus: bus.connection)."""
         try:
             self._connection = connection
             self._vocabulary = vocabulary
             self._table = table
-            self._on_transition = on_transition
+            self._exporter = exporter
             self._name_by_target = {declaration.target: name for name, declaration in vocabulary.items()}
             self._subscriptions = []
         except Exception as error:
@@ -127,10 +127,21 @@ class SystemdMirror:
             raise
 
     def _apply(self, name, present, since):
+        """Publish or unpublish first, commit to the table only if that succeeded, then
+        announce. If publishing fails the table is untouched, so the next resync retries
+        and List/Has never disagree with the object tree."""
         try:
-            transition = self._table.update(name, present, since)
-            if transition is not None:
-                self._on_transition(name, transition)
+            transition = self._table.transition_for(name, present)
+            if transition is None:
+                self._table.update(name, present, since)
+                return
+            try:
+                self._exporter.apply(name, transition, since)
+            except Exception as error:
+                report.failure("SystemdMirror._apply(" + name + ")", error)
+                return
+            self._table.update(name, present, since)
+            self._exporter.announce(name, transition, since)
         except Exception as error:
             report.failure("SystemdMirror._apply", error)
             raise
