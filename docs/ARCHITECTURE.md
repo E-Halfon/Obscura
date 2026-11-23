@@ -165,7 +165,8 @@ are refused. Services that belong to a capability are `PartOf=` and `WantedBy=` 
 target and never pull it in. `obscura-capd` (`org.obscura.Capabilities1` on the system
 bus) loads the target for every declared capability (`/usr/share/obscura/capabilities.d/`)
 and mirrors its state; it never detects anything itself. Upstream units that fail on
-absent hardware get a drop-in condition (e.g. mcelog in VMs) so they are skipped, not failed.
+absent hardware get a drop-in condition (e.g. mcelog outside Intel hardware with
+`/dev/mcelog`) so they are skipped, not failed.
 
 **One universal image.** Capabilities are detected at **runtime**, never composed at
 build time. Per-host composition (e.g. one NixOS flake per device) fails the flash-drive
@@ -777,6 +778,10 @@ stays inside portable devices (small, ~1 W); the Switch belongs in a home coproc
     how it gets tested before outside packs depend on it.
 13. **Settings-assistant model choice.** A 1–2B model with reliable structured tool
     calling. Pick at build time; this space changes every few months.
+14. **AMD hardware-error logging.** mcelog runs only on Intel CPUs with `/dev/mcelog`; it
+    is skipped in VMs and on AMD (§4). AMD machine-check and EDAC reporting (rasdaemon)
+    is a later item. **The skip still needs verifying on the Ryzen desktop:** mcelog
+    skipped, not failed, in `systemctl --failed`.
 
 ---
 

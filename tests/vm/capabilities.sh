@@ -12,7 +12,7 @@
 #   restart                C-5: restarting capd rebuilds the same state
 #   semantics              C-6: has → 0/1 for declared names, 2 for an unknown one
 #   no-fake                C-7: manual start/stop of capability targets is refused
-#   mcelog                 C-8: mcelog is skipped in a VM, not failed
+#   mcelog                 C-8: mcelog runs only on Intel with /dev/mcelog; skipped, not failed, elsewhere
 #   all                    state, restart, semantics, no-fake, mcelog (non-interactive)
 
 set -Eeuo pipefail
@@ -255,19 +255,26 @@ test_no_fake() {
 }
 
 test_mcelog() {
+    local result active
     if ! systemctl cat mcelog.service >/dev/null 2>&1; then
         skip "mcelog.service not in this image"
         return 77
     fi
-    if [ "$(systemd-detect-virt)" = "none" ]; then
-        skip "not in a VM"
-        return 77
+    result=$(systemctl show -P Result mcelog.service)
+    active=$(systemctl show -P ActiveState mcelog.service)
+    if [ "$active" = "failed" ]; then
+        fail "mcelog failed (Result=$result)"
+        return 0
     fi
-    if [ "$(systemctl show -P ConditionResult mcelog.service)" = "no" ] \
-        && [ "$(systemctl show -P ActiveState mcelog.service)" != "failed" ]; then
-        pass "mcelog skipped by condition, not failed"
+    if grep -q "^vendor_id[[:space:]]*: GenuineIntel" /proc/cpuinfo && [ -e /dev/mcelog ]; then
+        pass "Intel with /dev/mcelog: mcelog allowed to run (ActiveState=$active)"
+    elif [ "$result" = "exec-condition" ]; then
+        pass "mcelog skipped by ExecCondition, not failed"
+    elif [ "$active" = "inactive" ] && [ "$result" = "success" ]; then
+        skip "mcelog was never started this boot (not enabled?)"
+        return 77
     else
-        fail "mcelog: ConditionResult=$(systemctl show -P ConditionResult mcelog.service) ActiveState=$(systemctl show -P ActiveState mcelog.service)"
+        fail "mcelog: Result=$result ActiveState=$active"
     fi
 }
 
