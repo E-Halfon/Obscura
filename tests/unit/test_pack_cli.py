@@ -109,6 +109,12 @@ class CliTest(unittest.TestCase):
         self.assertEqual(status, 1)
         self.assertEqual(json.loads(output)["pack-demo"]["state"], "missing-hardware")
 
+    def test_vocabulary_failure_makes_hardware_packs_unevaluable(self):
+        with mock.patch.object(capabilities, "capability_vocabulary", side_effect=OSError("unreadable")):
+            status, output = self.run_cli("readiness", "pack-demo", "--json")
+        self.assertEqual(status, 1)
+        self.assertEqual(json.loads(output)["pack-demo"]["state"], "unevaluable")
+
     def test_unknown_pack_is_a_usage_error(self):
         status, _ = self.run_cli("readiness", "pack-nope")
         self.assertEqual(status, 2)

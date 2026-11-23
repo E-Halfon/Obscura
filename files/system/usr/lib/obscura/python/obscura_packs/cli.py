@@ -128,7 +128,15 @@ def _readiness(args, signatures):
         # Ask capd only when some pack has hardware requirements.
         needs_capd = any(pack.manifest.requires or pack.manifest.recommends for pack in catalog.packs.values())
         present = capabilities.present_capabilities() if needs_capd else frozenset()
-        vocabulary = capabilities.capability_vocabulary() if needs_capd else {}
+        vocabulary = {}
+        if needs_capd:
+            try:
+                vocabulary = capabilities.capability_vocabulary()
+            except Exception as error:
+                # Without the vocabulary, hardware can't be judged: treat it like capd not
+                # answering, so each affected pack is unevaluable and the rest still report.
+                report.failure("cli._readiness", error)
+                present = None
         results = readiness.evaluate_catalog(catalog, present, vocabulary, args.home,
                                              cache=userfiles.cache_for(args.home))
         names = args.names or catalog.names()
