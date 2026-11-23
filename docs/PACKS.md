@@ -143,7 +143,7 @@ The core ships in every image and is what packs build on.
 | Component | Software | Notes |
 |---|---|---|
 | Kernel | Linux mainline, `MODULES=most`, binder/binderfs, KVM, usbip, v4l2 | One universal image |
-| Compositor | Wayland (wlroots-based) | Draws decorations for every foreign window |
+| Compositor | KDE Plasma (KWin, Wayland) | Draws decorations for every foreign window |
 | Audio | PipeWire | Single clock domain |
 | Dispatcher | `binfmt_misc` + routing policy + compatibility database | Picks the pack per program |
 | Capability service | udev → systemd → DBus (`obscura-capd`) | Reports §2 per device; hardware only |
