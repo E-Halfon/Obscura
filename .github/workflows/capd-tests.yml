@@ -1,0 +1,43 @@
+name: capd-tests
+# Unit, consistency, and DBus integration tests for the capability service (task 0.2).
+# Integration tests run obscura-capd against a mock systemd on a private bus.
+on:
+  push:
+    paths:
+      - "files/system/usr/**"
+      - "tests/**"
+      - "docs/PACKS.md"
+      - ".github/workflows/capd-tests.yml"
+  pull_request:
+    paths:
+      - "files/system/usr/**"
+      - "tests/**"
+      - "docs/PACKS.md"
+      - ".github/workflows/capd-tests.yml"
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            python3-dasbus python3-gi python3-dbus python3-dbusmock dbus
+      - name: Run tests
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: /usr/bin/python3 -m unittest discover -s tests -t . -v
+      - name: Fail if integration tests were skipped
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: |
+          /usr/bin/python3 -m unittest tests.integration.test_capd_dbus -v 2>&1 | tee integration.log
+          if grep -q "skipped" integration.log; then
+            echo "integration tests skipped: dependencies missing on the runner" >&2
+            exit 1
+          fi
