@@ -6,7 +6,10 @@ through or around the action API (ARCHITECTURE.md §20).
 """
 
 from dasbus.server.interface import dbus_interface, dbus_signal
-from dasbus.typing import Bool, Dict, Int, List, ObjPath, Str, UInt64, Variant, get_variant
+# The dasbus List type is imported as DBusList: Manager defines a DBus method named List,
+# which would shadow the type inside the class body for every later annotation.
+from dasbus.typing import Bool, Dict, Int, ObjPath, Str, UInt64, Variant, get_variant
+from dasbus.typing import List as DBusList
 
 from obscura_capd import report
 from obscura_capd.constants import (
@@ -97,7 +100,7 @@ class ObjectManager:
         pass
 
     @dbus_signal
-    def InterfacesRemoved(self, object_path: ObjPath, interfaces: List[Str]):
+    def InterfacesRemoved(self, object_path: ObjPath, interfaces: DBusList[Str]):
         pass
 
 
@@ -121,7 +124,7 @@ class Manager(ObjectManager):
             report.failure("Manager.ApiVersion", error)
             raise
 
-    def List(self) -> List[Str]:
+    def List(self) -> DBusList[Str]:
         """Names of the capabilities present on this device."""
         try:
             return self._table.present_names()
@@ -129,7 +132,7 @@ class Manager(ObjectManager):
             report.failure("Manager.List", error)
             raise
 
-    def Vocabulary(self) -> List[Str]:
+    def Vocabulary(self) -> DBusList[Str]:
         """Every declared capability name, present or not."""
         try:
             return self._table.declared_names()
