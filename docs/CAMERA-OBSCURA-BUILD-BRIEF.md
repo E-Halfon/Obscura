@@ -347,7 +347,7 @@ accept drift. Shipping beats purity.
 | 0.19 | **Dialer/SMS UI wired to the telephony capability** | 0.18 | 3 |
 | 0.20 | Integration, Stage 0 test pass | all | 4 |
 | **Foundation track** | | | |
-| 0.21 | **Pack format v1:** manifest schema, `api` version, readiness evaluation | 0.2 | 4 |
+| 0.21 | **Pack format v1:** manifest schema, `api` version, readiness evaluation — ✅ **done** (PR #3, 2026-11-23; open VM checks tracked in §7, "Stage 0 — pack format") | 0.2 | 4 |
 | 0.22 | **Pack manager daemon (DBus) + CLI:** install, update, remove, pin, rollback. Writes `/var/lib/obscura/packs`; until 0.23, installed packs are not signature-checked, so the daemon installs only what the user explicitly chose | 0.21 | 5 |
 | 0.23 | System bundles + signed repository (index on GitHub Releases). **Verify pack signatures** when installing, and again when the catalog loads installed packs (`obscura_packs/catalog.py` trusts them until then). Signed repository packs become eligible to declare `runtime = true` (until then only factory packs may, §17.4) | 0.22 | 2 |
 | 0.24 | **Dispatcher:** precedence rules, compatibility database v0, overrides keyed on product + publisher | 0.21, 0.4 | 4 |
@@ -549,6 +549,15 @@ run in CI (`capd-tests`).
 | P-7 | Malformed manifest | Skipped with one reported problem; no traceback, no failed units |
 
 P-1…P-7 cover the user-files half of T-70. Its Neo half stays open until 0.28.
+
+Task 0.21 passed its VM run on the branch image (`ghcr.io/e-halfon/obscura:7349dcc-45`).
+P-1…P-7 all ran and passed, including the interactive P-4 with a webcam passed through.
+These parts were **not run** in that pass and stay open until they are:
+
+| ID | Check | Why it hasn't run | Unblocked by |
+|---|---|---|---|
+| P-2 (after 0.2b) | pack-wine is Insufficient hardware with `vulkan-1.3` *absent*, not `capability-unknown` | Task 0.2b isn't built, so capd doesn't declare `x86-64-v3` or `vulkan-1.3`. The pass ran P-2's before-0.2b branch (`capability-unknown` for both) | Task 0.2b, then rerun `./packs.sh wine` in the VM |
+| P-2 (bare metal) | pack-wine is **Ready** | Needs both capabilities declared (0.2b) and real hardware with accelerated Vulkan; the VM has only lavapipe or a virtual GPU, which 0.2b excludes | Task 0.2b, then the image booted on the Ryzen desktop (with T-50) |
 
 ### Stage 0 — telephony
 
