@@ -1,0 +1,13 @@
+# Camera Obscura capability: battery (ARCHITECTURE.md §4).
+# Active = present, inactive = absent. Never "failed".
+# Started only by udev (70-obscura-cap-battery.rules) through SYSTEMD_WANTS when matching
+# hardware appears. StopWhenUnneeded stops it once the last matching device is gone.
+# Manual start and stop are refused so the state can't be faked; tests use real or
+# virtual devices. Units that belong to this capability use PartOf= and
+# WantedBy= this target and must never Requires= or Wants= it.
+[Unit]
+Description=Obscura capability: A system battery
+Documentation=file:/usr/share/obscura/capabilities.d/battery.toml
+StopWhenUnneeded=yes
+RefuseManualStart=yes
+RefuseManualStop=yes

@@ -148,12 +148,24 @@ activates, and the UI surfaces it exposes. Nothing more.
 | `camera` | udev: UVC or CSI | camera portal, virtual cam source | most |
 
 `windows-apps` and `android-apps` come from packs, not the core (§17.4). The core supplies
-only the kernel-level support they sit on: binder/binderfs, KVM, and `binfmt_misc`.
+only the kernel-level support they sit on: binder/binderfs, KVM, and `binfmt_misc`. Their
+availability is pack readiness (§17.3), reported by the pack manager; the capability
+service reports hardware only. The capability vocabulary is PACKS.md §2.
 
 **Implementation:** udev detects → systemd activates the unit → the DBus interface
 appears → the UI surface becomes reachable. This is how ModemManager already behaves:
 per-feature DBus interfaces that simply aren't exported when the modem lacks the feature.
 Follow that pattern rather than inventing one.
+
+Concretely, each capability is a systemd target, `obscura-cap-<name>.target`: **active
+means present, inactive means absent**, and nothing else is a source of truth. A udev rule
+starts the target through `SYSTEMD_WANTS` when matching hardware appears;
+`StopWhenUnneeded=yes` stops it when the last matching device goes; manual start and stop
+are refused. Services that belong to a capability are `PartOf=` and `WantedBy=` its
+target and never pull it in. `obscura-capd` (`org.obscura.Capabilities1` on the system
+bus) loads the target for every declared capability (`/usr/share/obscura/capabilities.d/`)
+and mirrors its state; it never detects anything itself. Upstream units that fail on
+absent hardware get a drop-in condition (e.g. mcelog in VMs) so they are skipped, not failed.
 
 **One universal image.** Capabilities are detected at **runtime**, never composed at
 build time. Per-host composition (e.g. one NixOS flake per device) fails the flash-drive
@@ -668,6 +680,10 @@ stays inside portable devices (small, ~1 W); the Switch belongs in a home coproc
 - **Mission statement and three-tier model (§0)**
 - **x86-64 on every device; AMD and Intel both supported; one universal image with
   runtime capability detection (§4)**
+- **A capability is a systemd target (`obscura-cap-<name>.target`), started by udev and
+  stopped by `StopWhenUnneeded`; `obscura-capd` mirrors the declared vocabulary over DBus
+  and never detects. Capabilities are hardware only; pack availability (`windows-apps`,
+  `android-apps`) is pack readiness from the pack manager (§4, §17.3, PACKS.md §2)**
 - **Hidden Windows VM as tier 2 for apps Wine can't run (§10.6)**
 - **One coprocessor interface for Neo, Windows VM, and Switch (§10.7)**
 - **Switch via capture coprocessor; PlayStation/Xbox via remote play; no Switch emulation**
