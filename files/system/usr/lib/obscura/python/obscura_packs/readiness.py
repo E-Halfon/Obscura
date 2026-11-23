@@ -67,31 +67,35 @@ def _describe(name, vocabulary):
 
 
 def _hardware(manifest, present, vocabulary, not_on_this_device):
-    """(reasons, attachable): reasons for every missing required capability, and whether
-    any of them could be fixed by connecting something."""
+    """(reasons, fixable): reasons for every missing required capability, and whether
+    connecting something could fix all of them. One capability that can't be connected
+    (or can't be detected) makes the whole result Insufficient hardware: telling the user
+    to connect a device would not help."""
     try:
         reasons = []
-        attachable = False
+        fixable = True
         for name in manifest.requires:
             if name in present:
                 continue
             declaration = vocabulary.get(name)
             if declaration is None:
+                fixable = False
                 reasons.append(Reason("capability-unknown", name,
                                       "Needs " + name + ", which this version of Obscura can't detect yet.",
                                       FIX_UPDATE_OBSCURA))
             elif declaration.kind in _ATTACHABLE_KINDS:
-                attachable = True
                 reasons.append(Reason("capability-absent", name,
                                       "Needs " + _describe(name, vocabulary) + ". None is connected or reachable.",
                                       FIX_CONNECT_DEVICE))
             else:
+                fixable = False
                 reasons.append(Reason("capability-absent", name,
                                       "Needs " + _describe(name, vocabulary) + ". This device doesn't have it."))
         if not_on_this_device:
+            fixable = False
             reasons.append(Reason("not-on-this-device", manifest.name,
                                   "Set not to run on this device.", FIX_RUN_HERE))
-        return reasons, attachable
+        return reasons, fixable
     except Exception as error:
         report.failure("readiness._hardware", error)
         raise
@@ -184,7 +188,7 @@ def _evaluate(manifest, present, vocabulary, runtime_states, file_status, not_on
                 FIX_COPY_DIAGNOSTICS),))
         present = frozenset(present or ())
 
-        hardware, attachable = _hardware(manifest, present, vocabulary, not_on_this_device)
+        hardware, fixable = _hardware(manifest, present, vocabulary, not_on_this_device)
         runtime, inherited = _runtimes(manifest, runtime_states)
         files, file_notes = _files(manifest, file_status)
         notes = tuple(_recommendations(manifest, present, vocabulary) + file_notes)
@@ -194,7 +198,7 @@ def _evaluate(manifest, present, vocabulary, runtime_states, file_status, not_on
             if manifest.remote and remote_ready:
                 return Readiness(manifest.name, REMOTE, tuple(hardware),
                                  notes + ("Runs on another of your devices.",))
-            state = MISSING_HARDWARE if attachable else INSUFFICIENT_HARDWARE
+            state = MISSING_HARDWARE if fixable else INSUFFICIENT_HARDWARE
             return Readiness(manifest.name, state, reasons, notes)
         if runtime:
             return Readiness(manifest.name, inherited or NEEDS_PACK, reasons, notes)

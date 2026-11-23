@@ -95,10 +95,17 @@ class ReadinessTest(unittest.TestCase):
     def test_absent_probe_capability_is_missing_hardware(self):
         self.assertEqual(evaluate(pack(requires=["apple-coprocessor"]), frozenset(), VOCABULARY).state, MISSING_HARDWARE)
 
-    def test_mixed_static_and_device_is_missing_hardware(self):
-        result = evaluate(pack(requires=["x86-64-v3", "camera"]), frozenset(), VOCABULARY)
+    def test_mixed_static_and_device_is_insufficient_hardware(self):
+        # Connecting a camera can't fix the missing CPU feature, so don't say "connect".
+        for requires in (["x86-64-v3", "camera"], ["camera", "x86-64-v3"], ["camera", "vulkan-1.3"]):
+            with self.subTest(requires):
+                result = evaluate(pack(requires=requires), frozenset(), VOCABULARY)
+                self.assertEqual(result.state, INSUFFICIENT_HARDWARE)
+                self.assertEqual(len(result.reasons), 2)
+
+    def test_only_attachable_absences_are_missing_hardware(self):
+        result = evaluate(pack(requires=["camera", "apple-coprocessor"]), frozenset(), VOCABULARY)
         self.assertEqual(result.state, MISSING_HARDWARE)
-        self.assertEqual(len(result.reasons), 2)
 
     def test_undeclared_capability_is_insufficient_and_says_so(self):
         # pack-wine before task 0.2b: vulkan-1.3 isn't declared yet.

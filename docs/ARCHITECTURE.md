@@ -1036,9 +1036,10 @@ Each device evaluates every installed pack against its own capabilities and repo
 once. The state is then picked in this order:
 1. **Hardware.** A required capability is absent, or the pack is marked "not on this
    device". If `fallback.remote` is set and a peer can run the pack, the state is
-   **Remote**. Otherwise it depends on the capability's kind: an absent `device` or
-   `probe` capability gives **Missing hardware** (something can be connected); an absent
-   `static` capability, or one this Obscura can't detect, gives **Insufficient hardware**.
+   **Remote**. Otherwise it's **Insufficient hardware** if any absent capability is one
+   that can't be connected (a `static` capability, or one this Obscura can't detect),
+   because telling the user to connect something wouldn't fix it. Only when every absent
+   capability can be connected (`device` or `probe`) is it **Missing hardware**.
 2. **Runtime.** The runtime pack isn't installed: **Needs another pack**. It's installed
    but not ready: the dependent pack takes the runtime's state.
 3. **Files.** A required user file is absent or matches no listed checksum: **Missing
