@@ -192,6 +192,21 @@ class ReadinessTest(unittest.TestCase):
         self.assertEqual(result.state, INSUFFICIENT_HARDWARE)
         self.assertEqual(self.codes(result), ["runtime-not-ready"])
 
+    def test_remote_only_runtime_is_not_runnable_for_a_local_only_pack(self):
+        proton = Readiness("pack-proton", REMOTE)
+        result = evaluate(pack(depends=["pack-proton"]), frozenset(), VOCABULARY, {"pack-proton": proton},
+                          remote_ready=True)
+        self.assertEqual(result.state, INSUFFICIENT_HARDWARE)
+        self.assertEqual(self.codes(result), ["runtime-remote-only"])
+
+    def test_remote_only_runtime_needs_a_peer_for_this_pack(self):
+        proton = Readiness("pack-proton", REMOTE)
+        manifest = pack(depends=["pack-proton"], remote=True)
+        self.assertEqual(evaluate(manifest, frozenset(), VOCABULARY, {"pack-proton": proton},
+                                  remote_ready=True).state, REMOTE)
+        self.assertEqual(evaluate(manifest, frozenset(), VOCABULARY, {"pack-proton": proton},
+                                  remote_ready=False).state, INSUFFICIENT_HARDWARE)
+
     def test_ready_runtime(self):
         proton = evaluate(pack("pack-proton", runtime=True), frozenset(), VOCABULARY)
         self.assertEqual(evaluate(pack(depends=["pack-proton"]), frozenset(), VOCABULARY,

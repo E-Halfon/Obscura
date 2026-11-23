@@ -99,12 +99,16 @@ def _hardware(manifest, present, vocabulary, not_on_this_device):
         raise
 
 
-def _runtimes(manifest, runtime_states):
-    """(reasons, inherited state or None). A dependency that isn't installed needs a pack.
-    An installed runtime that isn't ready passes its state on."""
+def _runtimes(manifest, runtime_states, remote_ready):
+    """(reasons, inherited state or None, remote). A dependency that isn't installed needs a
+    pack. An installed runtime that isn't ready passes its state on. A runtime that only
+    runs remotely is enough only if this pack may itself run remotely and a peer can run
+    it (remote is then True); otherwise this pack can't run anywhere, which is
+    Insufficient hardware, never Remote."""
     try:
         reasons = []
         inherited = None
+        remote = False
         for name in manifest.depends:
             state = runtime_states.get(name)
             if state is None:
@@ -113,12 +117,22 @@ def _runtimes(manifest, runtime_states):
                 continue
             if state.state == READY:
                 continue
+            if state.state == REMOTE:
+                if manifest.remote and remote_ready:
+                    remote = True
+                    continue
+                reasons.append(Reason("runtime-remote-only", name,
+                                      "Needs the " + name + " pack, which can only run on another of your devices,"
+                                      " and this pack can't run remotely."))
+                if inherited is None:
+                    inherited = INSUFFICIENT_HARDWARE
+                continue
             why = state.reasons[0].message if state.reasons else state.state
             reasons.append(Reason("runtime-not-ready", name, "Needs the " + name + " pack, which isn't ready: " + why,
                                   state.reasons[0].fix if state.reasons else ""))
             if inherited is None:
                 inherited = state.state
-        return reasons, inherited
+        return reasons, inherited, remote
     except Exception as error:
         report.failure("readiness._runtimes", error)
         raise
@@ -187,7 +201,7 @@ def _evaluate(manifest, present, vocabulary, runtime_states, file_status, not_on
         present = frozenset(present or ())
 
         hardware, fixable = _hardware(manifest, present, vocabulary, not_on_this_device)
-        runtime, inherited = _runtimes(manifest, runtime_states)
+        runtime, inherited, runtime_remote = _runtimes(manifest, runtime_states, remote_ready)
         files, file_notes = _files(manifest, file_status)
         notes = tuple(_recommendations(manifest, present, vocabulary) + file_notes)
         reasons = tuple(hardware + runtime + files)
@@ -200,6 +214,8 @@ def _evaluate(manifest, present, vocabulary, runtime_states, file_status, not_on
             return Readiness(manifest.name, state, reasons, notes)
         if runtime:
             return Readiness(manifest.name, inherited or NEEDS_PACK, reasons, notes)
+        if runtime_remote:
+            return Readiness(manifest.name, REMOTE, (), notes + ("Runs on another of your devices.",))
         if files:
             return Readiness(manifest.name, MISSING_FILES, reasons, notes)
         return Readiness(manifest.name, READY, (), notes)
