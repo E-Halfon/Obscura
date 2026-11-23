@@ -47,5 +47,5 @@ INSTALLED_ROOT = "/var/lib/obscura/packs"
 SIGNATURES_FILE = "/usr/share/obscura/signatures.toml"
 CURRENT_LINK = "current"
 REMOVED_MARKER = "removed"
-USER_FILES_DIR = "Obscura/firmware"         # under the user's home
-CHECKSUM_CACHE = ".cache/obscura/checksums.json"  # under the user's home
+USER_FILES_DIR = ("Obscura", "firmware")                     # under the user's home
+CHECKSUM_CACHE = (".cache", "obscura", "checksums.json")     # under the user's home
