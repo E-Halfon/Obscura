@@ -36,3 +36,4 @@ SystemCallArchitectures=native
 CapabilityBoundingSet=
 SystemCallFilter=@system-service
 SystemCallErrorNumber=EPERM
+ProtectProc=invisible
