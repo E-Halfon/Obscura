@@ -1,0 +1,14 @@
+# Test fixture for tests/unit, tests/integration, and tests/vm/packs.sh. Never shipped.
+[pack]
+name      = "pack-fixture-camera"
+api       = 1
+version   = "1.0"
+platform  = "retro"
+technique = "emulation"
+summary   = "Test pack that needs a camera."
+
+[handles]
+extensions = [".obscuratest"]
+
+[requires]
+capabilities = ["camera"]

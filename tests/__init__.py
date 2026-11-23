@@ -22,3 +22,4 @@ if CAPD_PYTHONPATH not in sys.path:
 FACTORY_PACKS_DIR = os.path.join(IMAGE_ROOT, "usr", "share", "obscura", "packs")
 SIGNATURES_FILE = os.path.join(IMAGE_ROOT, "usr", "share", "obscura", "signatures.toml")
 PACK_FIXTURES_DIR = os.path.join(REPO_ROOT, "tests", "fixtures", "packs")
+PACK_FIXTURES_MALFORMED_DIR = os.path.join(REPO_ROOT, "tests", "fixtures", "packs-malformed")

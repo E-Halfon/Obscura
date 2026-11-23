@@ -59,7 +59,10 @@ def wait_for(predicate, message):
 
 
 @unittest.skipIf(dbus is None, SKIP_REASON)
-class CapdDBusTest(dbusmock.DBusTestCase if dbus is not None else unittest.TestCase):
+class CapdHarness(dbusmock.DBusTestCase if dbus is not None else unittest.TestCase):
+    """Private system bus, mock systemd, and capd. Holds no tests, so other integration
+    suites (e.g. test_packs_capd) can reuse it."""
+
     @classmethod
     def setUpClass(cls):
         cls.start_system_bus()
@@ -168,8 +171,10 @@ class CapdDBusTest(dbusmock.DBusTestCase if dbus is not None else unittest.TestC
             env=self.environment(), capture_output=True, text=True, timeout=TIMEOUT,
         ).returncode
 
-    # -- tests -----------------------------------------------------------------------
 
+
+@unittest.skipIf(dbus is None, SKIP_REASON)
+class CapdDBusTest(CapdHarness):
     def test_initial_state_and_queries(self):
         self.start_capd()
         manager = self.manager()
