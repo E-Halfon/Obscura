@@ -5,8 +5,10 @@ are never bundled. A file is accepted when its SHA-256 matches one of the manife
 checksums, or, for kinds with no checksum (OS images, media), when it exists.
 
 Hashing a multi-gigabyte image on every readiness check would be slow, so results are
-cached per user in ~/.cache/obscura/checksums.json, keyed on the path and invalidated by
-any change in size, modification time, or inode.
+cached per user in $XDG_CACHE_HOME/obscura/checksums.json (default ~/.cache), keyed on
+the path and invalidated by any change in size, modification time, inode-change time,
+or inode. The change time catches a same-size rewrite that restores the modification
+time (e.g. `cp -p` over the file), which can't be faked from userspace.
 """
 
 import hashlib
@@ -25,7 +27,7 @@ WRONG_DUMP = "wrong-dump"
 UNREADABLE = "unreadable"
 
 _CHUNK = 1024 * 1024
-_CACHE_VERSION = 1
+_CACHE_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -60,7 +62,7 @@ def sha256_of(path):
 
 
 class ChecksumCache:
-    """path -> (size, mtime_ns, inode, sha256). A missing or corrupt cache file is just an
+    """path -> (size, mtime_ns, ctime_ns, inode, sha256). A missing or corrupt cache file is just an
     empty cache: the cost of losing it is re-hashing, never a wrong answer."""
 
     def __init__(self, path):
@@ -95,7 +97,7 @@ class ChecksumCache:
     @staticmethod
     def _key(info):
         try:
-            return [info.st_size, info.st_mtime_ns, info.st_ino]
+            return [info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_ino]
         except Exception as error:
             report.failure("ChecksumCache._key", error)
             raise
@@ -141,9 +143,15 @@ class ChecksumCache:
             raise
 
 
-def cache_for(home):
+def cache_for(home, environ=None):
+    """The user's checksum cache: $XDG_CACHE_HOME/obscura/checksums.json when that is set
+    to an absolute path (XDG Base Directory spec), else <home>/.cache/obscura/..."""
     try:
-        return ChecksumCache(os.path.join(home, *CHECKSUM_CACHE))
+        environ = os.environ if environ is None else environ
+        base = environ.get("XDG_CACHE_HOME", "")
+        if not base or not os.path.isabs(base):
+            base = os.path.join(home, CHECKSUM_CACHE[0])
+        return ChecksumCache(os.path.join(base, *CHECKSUM_CACHE[1:]))
     except Exception as error:
         report.failure("userfiles.cache_for", error)
         raise
