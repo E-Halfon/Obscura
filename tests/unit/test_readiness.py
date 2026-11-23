@@ -222,6 +222,12 @@ class ReadinessTest(unittest.TestCase):
         # A pack with no hardware requirements doesn't need capd.
         self.assertEqual(evaluate(pack(), None, VOCABULARY).state, READY)
 
+    def test_capability_service_unavailable_with_only_recommendations(self):
+        # Recommended capabilities are notes, never a reason the pack can't be checked.
+        result = evaluate(pack(recommends=["dgpu"]), None, VOCABULARY)
+        self.assertEqual(result.state, READY)
+        self.assertEqual(result.notes, ("Couldn't check for recommended hardware.",))
+
     # -- fail closed -------------------------------------------------------------------
 
     def test_exception_in_the_evaluator_is_unevaluable_never_ready(self):

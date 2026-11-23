@@ -193,17 +193,25 @@ def _evaluate(manifest, present, vocabulary, runtime_states, file_status, not_on
             return Readiness(manifest.name, NEEDS_NEWER_OBSCURA, (Reason(
                 "needs-newer-obscura", manifest.name,
                 "This pack needs a newer version of Obscura.", FIX_UPDATE_OBSCURA),))
-        if present is None and (manifest.requires or manifest.recommends):
+        # Only required capabilities can block a pack; recommended ones are notes (§17.1).
+        if present is None and manifest.requires:
             return Readiness(manifest.name, UNEVALUABLE, (Reason(
                 "capabilities-unavailable", "obscura-capd",
                 "Obscura couldn't check this device's hardware (the capability service isn't answering).",
                 FIX_COPY_DIAGNOSTICS),))
+        capd_answered = present is not None
         present = frozenset(present or ())
 
         hardware, fixable = _hardware(manifest, present, vocabulary, not_on_this_device)
         runtime, inherited, runtime_remote = _runtimes(manifest, runtime_states, remote_ready)
         files, file_notes = _files(manifest, file_status)
-        notes = tuple(_recommendations(manifest, present, vocabulary) + file_notes)
+        if capd_answered:
+            recommendation_notes = _recommendations(manifest, present, vocabulary)
+        elif manifest.recommends:
+            recommendation_notes = ["Couldn't check for recommended hardware."]
+        else:
+            recommendation_notes = []
+        notes = tuple(recommendation_notes + file_notes)
         reasons = tuple(hardware + runtime + files)
 
         if hardware:
