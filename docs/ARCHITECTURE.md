@@ -1066,7 +1066,9 @@ hardware** with "Set not to run on this device" and a button to allow it here.
   Neo use the same format as a future PS6 pack, the format is tested by real use.
 - **The image may ship packs preinstalled, but they remain real packs** — each with a
   manifest, and the pack manager can update or remove them like any other. The core holds
-  only kernel-level support: binder/binderfs, KVM, and `binfmt_misc`.
+  only kernel-level support (binder/binderfs, KVM, and `binfmt_misc`), plus the signature
+  registry (`/usr/share/obscura/signatures.toml`): the magic bytes that packs refer to
+  by name, so no pack defines its own `binfmt_misc` handler (§17.1).
 - **The pack API is the stable contract.** Versioned from day one (`api = 1`). It must
   outlive any individual emulator.
 - **`api` is the major version; `api_minor` is the feature level within it.**
