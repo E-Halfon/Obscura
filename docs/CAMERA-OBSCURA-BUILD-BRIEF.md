@@ -326,7 +326,7 @@ accept drift. Shipping beats purity.
 | ID | Task | Depends on | Est. weeks |
 |---|---|---|---|
 | 0.1 | **Universal-image skeleton:** BlueBuild recipe on Universal Blue Aurora (`stable`), signed image builds, boots on the desktop | — | 3 |
-| 0.2 | **Capability module framework** (udev → systemd → DBus) | 0.1 | 3 |
+| 0.2 | **Capability module framework** (udev → systemd → DBus) — ✅ **done** (PR #2, 2026-11-22; open VM tests tracked in §7, "Stage 0 — capability framework") | 0.1 | 3 |
 | 0.3 | **KDE Plasma shell:** strip, theme, Windows-style layout | 0.1 | 2 |
 | 0.4 | Wine + binfmt_misc dispatch, `.exe` → window — **delivered as `pack-wine`** | 0.3, 0.21 | 3 |
 | 0.5 | Wine sandbox: bubblewrap, no-network default | 0.4 | 2 |
@@ -463,6 +463,23 @@ action API — nothing new is needed from the core. See ARCHITECTURE.md §21–�
 | T-16 ⏱ | Audio clock | Play from Linux, Wine, and Waydroid simultaneously | No crackle, drift, or resampling artifacts |
 | T-17 | Scheduling under load | Wine game while compiling | No audio dropouts; input lag subjectively flat |
 | T-18 | TCC survival | Apply a macOS point update, reboot | Note whether consent survives. **Expected to fail** — document recovery |
+
+### Stage 0 — capability framework (task 0.2)
+
+Task 0.2 passed its VM run on the branch image (`ghcr.io/e-halfon/obscura:315e4e2-45`,
+VMware Workstation). The C-tests are defined in `tests/vm/capabilities.sh` and
+`tests/vm/README.md`. These were **not run** in that pass and stay open until they are:
+
+| ID | Test | Why it hasn't run | Unblocked by |
+|---|---|---|---|
+| C-2 | `virt` present when `/dev/kvm` exists | Nested virtualization is unavailable in VMware while Hyper-V is on in the Windows host | Nested VT-x/AMD-V in the VM (Hyper-V off on the host), or bare metal |
+| C-3 | Camera hotplug ×10, one Added/Removed per cycle | Needs a USB webcam passed through to the VM | A webcam connected through *VM → Removable Devices* |
+| C-4 | Battery hotplug ×10 | Uses the `test_power` module, which Fedora's kernel very likely doesn't ship (`CONFIG_TEST_POWER` off) | Run on the laptop (Stage 1 hardware) |
+| C-4b | Battery present (`state --present battery`) | Needs VMware's *Report battery information to guest* on a host with a battery | A laptop host, or the laptop itself |
+| C-8 (hardware) | mcelog skipped, not failed, on AMD | Bare-metal AMD only; a VM can't show it (ARCHITECTURE.md §12 item 14) | Boot the image on the Ryzen desktop |
+
+T-50 (one USB stick boots all three devices with correct capabilities and no failed units)
+also remains open until the hardware exists.
 
 ### Stage 0 — telephony
 
