@@ -22,6 +22,8 @@ rejected options.
 - Every `if` and `else` has braces, even single-line bodies.
 - Every function has a try/catch (or the language's equivalent) that catches and reports
   failures such as index out of range, rather than letting them escape silently.
+- Test functions (tests/) are exempt from the try/catch rule: assertions and exceptions
+  must propagate so the test framework can report them. Production code still follows it.
 
 ## Repo layout
 - recipes/recipe.yml: the BlueBuild OS definition
