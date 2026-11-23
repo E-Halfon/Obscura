@@ -22,10 +22,17 @@ rejected options.
 - Every `if` and `else` has braces, even single-line bodies.
 - Every function has a try/catch (or the language's equivalent) that catches and reports
   failures such as index out of range, rather than letting them escape silently.
+- Test functions (tests/) are exempt from the try/catch rule: assertions and exceptions
+  must propagate so the test framework can report them. Production code still follows it.
 
 ## Repo layout
 - recipes/recipe.yml: the BlueBuild OS definition
 - files/system/: files copied into the image root; files/scripts/: build-time scripts
+- files/system/usr/lib/obscura/python/: Python system services (e.g. obscura_capd), which
+  live here and not in src/ because BlueBuild's files module only copies from ./files.
+  Move them to src/ once a build proves a Containerfile COPY from the repo root works.
+- tests/: unit and DBus integration tests (CI: capd-tests workflow); tests/vm/ runs on
+  the built image in a VM
 - packs/: pack manifests and pack code (scaffold new ones with /new-pack)
 - src/: pack manager, dispatcher, action API, Settings modules
 - docs/: the three design documents

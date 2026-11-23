@@ -1,0 +1,10 @@
+# Camera Obscura capability: camera (ARCHITECTURE.md §4).
+# Any V4L2 node that can capture video. ID_V4L_CAPABILITIES comes from
+# 60-persistent-v4l.rules, so this file must sort after it. UVC metadata nodes have no
+# capture capability and are skipped. Telling HDMI capture dongles apart
+# (capture-device) is a separate capability, not done here.
+ACTION=="remove", GOTO="obscura_cap_camera_end"
+SUBSYSTEM!="video4linux", GOTO="obscura_cap_camera_end"
+ENV{ID_V4L_CAPABILITIES}!="*:capture:*", GOTO="obscura_cap_camera_end"
+TAG+="systemd", ENV{SYSTEMD_WANTS}+="obscura-cap-camera.target"
+LABEL="obscura_cap_camera_end"

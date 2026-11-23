@@ -1,0 +1,10 @@
+# Camera Obscura capability: battery (ARCHITECTURE.md §4).
+# A system battery only. Mice, keyboards, and controllers also report power_supply
+# devices of type Battery, but with scope "Device"; those must not make a desktop
+# look like a laptop. System batteries have no scope attribute or scope "System".
+ACTION=="remove", GOTO="obscura_cap_battery_end"
+SUBSYSTEM!="power_supply", GOTO="obscura_cap_battery_end"
+ATTR{type}!="Battery", GOTO="obscura_cap_battery_end"
+ATTR{scope}=="Device", GOTO="obscura_cap_battery_end"
+TAG+="systemd", ENV{SYSTEMD_WANTS}+="obscura-cap-battery.target"
+LABEL="obscura_cap_battery_end"

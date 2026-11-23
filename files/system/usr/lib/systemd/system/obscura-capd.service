@@ -1,0 +1,40 @@
+# Camera Obscura capability service (ARCHITECTURE.md §4). Started on demand by DBus
+# activation (org.obscura.Capabilities1). It only reads systemd state, so it runs
+# unprivileged with no network and a read-only view of the system.
+[Unit]
+Description=Obscura capability service
+Documentation=file:/usr/share/obscura/capabilities.d/
+
+[Service]
+Type=dbus
+BusName=org.obscura.Capabilities1
+User=obscura-capd
+Group=obscura-capd
+Environment=PYTHONPATH=/usr/lib/obscura/python PYTHONDONTWRITEBYTECODE=1
+ExecStart=/usr/bin/python3 -P -m obscura_capd.daemon
+Restart=on-failure
+RestartSec=2
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+ProtectProc=invisible
+UMask=0077

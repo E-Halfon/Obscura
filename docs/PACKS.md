@@ -99,25 +99,40 @@ Everything else in this catalog comes later: consoles in Stage 0.5, `pack-automa
 
 ## 2. Capability vocabulary
 
-Packs list requirements using these names. The capability service reports them per device.
+Packs list requirements using these names. This is the **one** capability vocabulary;
+ARCHITECTURE.md §4 and the build brief's capability matrix refer to it. The capability
+service (`obscura-capd`, §3) reports each name per device as present or absent.
 
-| Capability | Meaning | D | L | P |
-|---|---|---|---|---|
-| `x86-64-v3` | AVX2, BMI2, FMA | ✔ | ✔ | ✔ |
-| `avx512` | AVX-512 (helps RPCS3) | ✔ Zen 4/5 | ✔ Zen 4 | ✘ |
-| `vulkan-1.3` | Vulkan 1.3 via Mesa (RADV/ANV) | ✔ | ✔ | ✔ |
-| `dgpu` | Discrete GPU | ✔ | ✘ | ✘ |
-| `virt` | AMD-V / VT-x | ✔ | ✔ | ✔ |
-| `iommu` | AMD-Vi / VT-d with usable groups | ✔ | ✔ | ✔ |
-| `gpu-passthrough` | Second GPU for a VM, or SR-IOV iGPU | ✔ | ~ | ✘ |
-| `hw-encode` | Hardware video encode (VA-API) | ✔ | ✔ | ✔ |
-| `hw-decode-hevc` | Hardware HEVC decode | ✔ | ✔ | ✔ |
-| `apple-coprocessor` | Neo board reachable over the coprocessor link | opt | opt | opt |
-| `capture-device` | UVC/V4L2 HDMI capture at 1080p60 | opt | opt | ✘ |
-| `controller-emulator` | RP2040-class board emulating a console pad | opt | opt | ✘ |
-| `xr-headset` | VR headset supported by the OpenXR runtime | opt | opt | ✘ |
-| `ram-16g` / `ram-32g` | Memory threshold | ✔ | ✔ | ~ |
-| `network-lan` | Local network to a peer device or console | ✔ | ✔ | ✔ |
+Capabilities are **hardware facts only**. Whether a platform is usable (`windows-apps`,
+`android-apps`) is pack readiness, reported by the pack manager (ARCHITECTURE.md §17.3),
+not by the capability service.
+
+**Kind** says how the capability is detected: **static** (a fixed fact checked at boot),
+**device** (udev; appears and disappears with hotplug), **probe** (a peer answers over a
+link). The first three implemented are `virt`, `battery`, and `camera` (build-brief task 0.2).
+
+| Capability | Kind | Meaning | D | L | P |
+|---|---|---|---|---|---|
+| `x86-64-v3` | static | AVX2, BMI2, FMA | ✔ | ✔ | ✔ |
+| `avx512` | static | AVX-512 (helps RPCS3) | ✔ Zen 4/5 | ✔ Zen 4 | ✘ |
+| `vulkan-1.3` | static | Vulkan 1.3 via Mesa (RADV/ANV) | ✔ | ✔ | ✔ |
+| `dgpu` | device | Discrete GPU | ✔ | ✘ | ✘ |
+| `virt` | device | AMD-V / VT-x, usable by KVM (`/dev/kvm` exists) | ✔ | ✔ | ✔ |
+| `iommu` | static | AMD-Vi / VT-d with usable groups | ✔ | ✔ | ✔ |
+| `gpu-passthrough` | static | Second GPU for a VM, or SR-IOV iGPU | ✔ | ~ | ✘ |
+| `hw-encode` | static | Hardware video encode (VA-API) | ✔ | ✔ | ✔ |
+| `hw-decode-hevc` | static | Hardware HEVC decode | ✔ | ✔ | ✔ |
+| `apple-coprocessor` | probe | Neo board reachable over the coprocessor link | opt | opt | opt |
+| `capture-device` | device | UVC/V4L2 HDMI capture at 1080p60 | opt | opt | ✘ |
+| `controller-emulator` | device | RP2040-class board emulating a console pad | opt | opt | ✘ |
+| `xr-headset` | device | VR headset supported by the OpenXR runtime | opt | opt | ✘ |
+| `ram-16g` / `ram-32g` | static | Memory threshold | ✔ | ✔ | ~ |
+| `network-lan` | probe | Local network to a peer device or console | ✔ | ✔ | ✔ |
+| `battery` | device | System battery (`power_supply`, type Battery, not a peripheral's) | ✘ | ✔ | ✔ |
+| `camera` | device | V4L2 video capture node (UVC or CSI) | ✔ | ✔ | ✔ |
+| `touch` | device | Touchscreen | opt | opt | ✔ |
+| `telephony` | device | USB-attached cellular modem with voice (IMS in modem firmware) | opt | ✔ | ✔ |
+| `gps` | device | Location fix from the modem or a GNSS receiver | opt | ✔ | ✔ |
 
 ---
 
@@ -128,15 +143,15 @@ The core ships in every image and is what packs build on.
 | Component | Software | Notes |
 |---|---|---|
 | Kernel | Linux mainline, `MODULES=most`, binder/binderfs, KVM, usbip, v4l2 | One universal image |
-| Compositor | Wayland (wlroots-based) | Draws decorations for every foreign window |
+| Compositor | KDE Plasma (KWin, Wayland) | Draws decorations for every foreign window |
 | Audio | PipeWire | Single clock domain |
 | Dispatcher | `binfmt_misc` + routing policy + compatibility database | Picks the pack per program |
-| Capability service | udev → systemd → DBus | Reports §2 per device |
+| Capability service | udev → systemd → DBus (`obscura-capd`) | Reports §2 per device; hardware only |
 | Mirroring service | HEVC window-stream client, one Wayland surface per remote window | Used by coprocessor and VM packs |
 | Coprocessor interface | Video out, input in, routed network, power control, kill switch | Shared by Neo, Windows VM, Switch |
 | Firewall | nftables default-deny, single DNS resolver, query and deny logging | Every pack is untrusted by default |
 | Sandbox | bubblewrap + XDG portals | |
-| Pack manager | Signed packs, manifest validation, readiness reports, rollback | NixOS modules underneath |
+| Pack manager | Signed packs, manifest validation, readiness reports, rollback | DBus daemon with GUI, "Run with", and CLI front ends (ARCHITECTURE.md §18.1) |
 | Native Linux | ELF x86-64, Flatpak, AppImage, Nix packages | Linux software needs no pack |
 | Language runtimes | OpenJDK, .NET, Python, Node, browser | Cross-platform runtimes run natively |
 

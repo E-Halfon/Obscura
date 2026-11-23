@@ -1,0 +1,10 @@
+# Camera Obscura capability declaration (ARCHITECTURE.md §4, vocabulary in PACKS.md §2).
+# Present while obscura-cap-battery.target is active; absent otherwise.
+# Detected when a power_supply device of type Battery whose scope is not Device (peripheral batteries do not count).
+
+[capability]
+name    = "battery"
+api     = 1
+kind    = "device"
+target  = "obscura-cap-battery.target"
+summary = "A system battery"

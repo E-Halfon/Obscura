@@ -1,0 +1,9 @@
+# Camera Obscura capability: virt (ARCHITECTURE.md §4).
+# /dev/kvm is the kvm misc device. It is registered only when kvm_amd or kvm_intel loads
+# on hardware with usable AMD-V / VT-x, so matching its uevent (rather than checking the
+# path once at boot) avoids racing the module load.
+ACTION=="remove", GOTO="obscura_cap_virt_end"
+SUBSYSTEM!="misc", GOTO="obscura_cap_virt_end"
+KERNEL!="kvm", GOTO="obscura_cap_virt_end"
+TAG+="systemd", ENV{SYSTEMD_WANTS}+="obscura-cap-virt.target"
+LABEL="obscura_cap_virt_end"

@@ -1,0 +1,10 @@
+# Camera Obscura capability declaration (ARCHITECTURE.md §4, vocabulary in PACKS.md §2).
+# Present while obscura-cap-virt.target is active; absent otherwise.
+# Detected when /dev/kvm appears (the kvm misc device, registered when kvm_amd or kvm_intel loads).
+
+[capability]
+name    = "virt"
+api     = 1
+kind    = "device"
+target  = "obscura-cap-virt.target"
+summary = "Hardware virtualization (AMD-V / VT-x) usable by KVM"

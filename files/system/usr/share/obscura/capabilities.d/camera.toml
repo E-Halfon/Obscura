@@ -1,0 +1,10 @@
+# Camera Obscura capability declaration (ARCHITECTURE.md §4, vocabulary in PACKS.md §2).
+# Present while obscura-cap-camera.target is active; absent otherwise.
+# Detected when a video4linux node whose ID_V4L_CAPABILITIES include capture.
+
+[capability]
+name    = "camera"
+api     = 1
+kind    = "device"
+target  = "obscura-cap-camera.target"
+summary = "A video capture camera (UVC or CSI)"
