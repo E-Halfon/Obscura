@@ -1,7 +1,8 @@
 name: capd-tests
 # Unit, consistency, and DBus integration tests for the capability service (task 0.2)
 # and the pack format (task 0.21). Integration tests run obscura-capd against a mock
-# systemd on a private bus; the pack tests run obscura-pack against that capd.
+# systemd on a private bus; the pack tests run obscura-pack against that capd. Task 0.2b
+# adds a check of the x86-64-v3 CPU conditions against the runner's real CPU.
 on:
   push:
     paths:
@@ -35,6 +36,34 @@ jobs:
         env:
           PYTHONDONTWRITEBYTECODE: "1"
         run: /usr/bin/python3 -m unittest discover -s tests -t . -v
+      - name: x86-64-v3 conditions hold on a real x86-64-v3 CPU
+        # A misspelled ConditionCPUFeature= name fails silently (the capability would read
+        # absent everywhere), so evaluate every line with systemd itself. The runner's CPU
+        # must support x86-64-v3, or this check proves nothing; glibc's loader says so.
+        run: |
+          set -euo pipefail
+          target=files/system/usr/lib/systemd/system/obscura-cap-x86-64-v3.target
+          if ! /lib64/ld-linux-x86-64.so.2 --help | grep -q 'x86-64-v3 (supported'; then
+            echo "runner CPU lacks x86-64-v3; can't check the conditions here" >&2
+            exit 1
+          fi
+          systemd-analyze --version | head -1
+          lines=$(grep -E '^\s*ConditionCPUFeature\s*=' "$target" | sed -E 's/\s+//g')
+          count=$(printf '%s\n' "$lines" | grep -c . || true)
+          if [ "$count" -lt 17 ]; then
+            echo "expected 17 ConditionCPUFeature lines in $target, found $count" >&2
+            exit 1
+          fi
+          failed=0
+          while IFS= read -r line; do
+            if systemd-analyze condition "$line" >/dev/null 2>&1; then
+              echo "ok   $line"
+            else
+              echo "FAIL $line (unknown name or feature missing)" >&2
+              failed=1
+            fi
+          done <<< "$lines"
+          exit "$failed"
       - name: Fail if integration tests were skipped
         env:
           PYTHONDONTWRITEBYTECODE: "1"

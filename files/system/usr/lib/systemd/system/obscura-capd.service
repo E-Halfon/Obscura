@@ -4,6 +4,10 @@
 [Unit]
 Description=Obscura capability service
 Documentation=file:/usr/share/obscura/capabilities.d/
+# Static capability targets are settled before capd reads them, so a target whose start
+# job hasn't run yet is never reported absent (build-brief task 0.2b). Ordering only:
+# capd never pulls a capability in.
+After=obscura-cap-x86-64-v3.target
 
 [Service]
 Type=dbus

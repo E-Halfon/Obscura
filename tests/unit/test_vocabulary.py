@@ -105,8 +105,9 @@ class LoadVocabularyTest(ReportCapture):
 
     def test_shipped_declarations(self):
         loaded = load_vocabulary(VOCABULARY_DIR)
-        self.assertEqual(sorted(loaded), ["battery", "camera", "virt"])
-        self.assertTrue(all(declaration.kind == "device" for declaration in loaded.values()))
+        self.assertEqual(sorted(loaded), ["battery", "camera", "virt", "x86-64-v3"])
+        self.assertEqual(loaded["x86-64-v3"].kind, "static")
+        self.assertFalse(loaded["x86-64-v3"].attachable)
         self.assertEqual(self.sent, [], "shipped declarations must load without problems")
 
     def test_missing_directory_is_empty_and_reported(self):

@@ -79,10 +79,11 @@ class CapdHarness(dbusmock.DBusTestCase if dbus is not None else unittest.TestCa
         self.systemd_mock.AddMethod("", "Subscribe", "", "", "")
         self.systemd_mock.AddMethod("", "LoadUnit", "s", "o", LOAD_UNIT)
 
-        # Starting point: battery present, camera and virt absent.
+        # Starting point: battery present, everything else absent.
         self.add_target("obscura-cap-battery.target", "active", 1700000000000000)
         self.add_target("obscura-cap-camera.target", "inactive", 0)
         self.add_target("obscura-cap-virt.target", "inactive", 0)
+        self.add_target("obscura-cap-x86-64-v3.target", "inactive", 0)
         self.capd = None
         self.watch_lines = None
 
@@ -179,7 +180,7 @@ class CapdDBusTest(CapdHarness):
         self.start_capd()
         manager = self.manager()
         self.assertEqual(list(manager.List()), ["battery"])
-        self.assertEqual(list(manager.Vocabulary()), ["battery", "camera", "virt"])
+        self.assertEqual(list(manager.Vocabulary()), ["battery", "camera", "virt", "x86-64-v3"])
         self.assertTrue(manager.Has("battery"))
         self.assertFalse(manager.Has("camera"))
         self.assertEqual(self.managed_paths(), ["/org/obscura/Capabilities1/cap/battery"])
@@ -261,6 +262,17 @@ class CapdDBusTest(CapdHarness):
             self.watch_lines.get(timeout=1.0)
         self.assertTrue(self.manager().Has("battery"))
         self.assertIsNone(self.capd.poll(), "capd must keep running")
+
+    def test_hyphenated_name_gets_an_escaped_path(self):
+        self.set_target("obscura-cap-x86-64-v3.target", "active", 9, announce=False)
+        self.start_capd()
+        self.assertTrue(self.manager().Has("x86-64-v3"))
+        path = "/org/obscura/Capabilities1/cap/x86_2d64_2dv3"
+        self.assertIn(path, self.managed_paths())
+        properties = dbus.Interface(self.system_bus.get_object(BUS_NAME, path),
+                                    dbus.PROPERTIES_IFACE).GetAll(CAPABILITY_INTERFACE)
+        self.assertEqual(properties["Name"], "x86-64-v3")
+        self.assertEqual(properties["Kind"], "static")
 
     def test_failed_target_is_absent(self):
         self.set_target("obscura-cap-camera.target", "failed", announce=False)
