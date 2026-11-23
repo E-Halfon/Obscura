@@ -12,8 +12,9 @@
 #   restart                C-5: restarting capd rebuilds the same state
 #   semantics              C-6: has → 0/1 for declared names, 2 for an unknown one
 #   no-fake                C-7: manual start/stop of capability targets is refused
+#   bus-policy             C-9: an unprivileged user can read everything and is refused Properties.Set
 #   mcelog                 C-8: mcelog runs only on Intel with /dev/mcelog; skipped, not failed, elsewhere
-#   all                    state, restart, semantics, no-fake, mcelog (non-interactive)
+#   all                    state, restart, semantics, no-fake, bus-policy, mcelog (non-interactive)
 
 set -Eeuo pipefail
 trap 'echo "ERROR: ${FUNCNAME[0]:-main} line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
@@ -254,6 +255,40 @@ test_no_fake() {
     done
 }
 
+test_bus_policy() {
+    local user=nobody service=org.obscura.Capabilities1 path=/org/obscura/Capabilities1 output
+    local -a call
+    call=(runuser -u "$user" -- busctl --system call "$service" "$path")
+
+    if output=$("${call[@]}" org.obscura.Capabilities1 List 2>&1); then
+        pass "$user can call List"
+    else
+        fail "$user refused List: $output"
+    fi
+    if output=$("${call[@]}" org.obscura.Capabilities1 Has s battery 2>&1); then
+        pass "$user can call Has"
+    else
+        fail "$user refused Has: $output"
+    fi
+    if output=$("${call[@]}" org.freedesktop.DBus.ObjectManager GetManagedObjects 2>&1); then
+        pass "$user can call GetManagedObjects"
+    else
+        fail "$user refused GetManagedObjects: $output"
+    fi
+    if output=$("${call[@]}" org.freedesktop.DBus.Properties GetAll s org.obscura.Capabilities1 2>&1); then
+        pass "$user can call Properties.GetAll"
+    else
+        fail "$user refused Properties.GetAll: $output"
+    fi
+    if output=$("${call[@]}" org.freedesktop.DBus.Properties Set ssv org.obscura.Capabilities1 ApiVersion i 2 2>&1); then
+        fail "$user was allowed Properties.Set"
+    elif [[ "$output" == *"ccess denied"* || "$output" == *"AccessDenied"* ]]; then
+        pass "$user refused Properties.Set by bus policy"
+    else
+        fail "Properties.Set failed, but not with AccessDenied (policy not applied?): $output"
+    fi
+}
+
 test_mcelog() {
     local result active
     if ! systemctl cat mcelog.service >/dev/null 2>&1; then
@@ -306,12 +341,14 @@ main() {
         restart) run_test test_restart ;;
         semantics) run_test test_semantics ;;
         no-fake) run_test test_no_fake ;;
+        bus-policy) run_test test_bus_policy ;;
         mcelog) run_test test_mcelog ;;
         all)
             run_test test_state "$@"
             run_test test_restart
             run_test test_semantics
             run_test test_no_fake
+            run_test test_bus_policy
             run_test test_mcelog
             ;;
         *) echo "unknown test: $test" >&2; exit 1 ;;

@@ -25,9 +25,10 @@ need the image booted in a VM.
 | C-5 | `sudo ./capabilities.sh restart` | Any | Ready |
 | C-6 | `sudo ./capabilities.sh semantics` | Any | Ready |
 | C-7 | `sudo ./capabilities.sh no-fake` | Any | Ready |
+| C-9 | `sudo ./capabilities.sh bus-policy` | Any. Runs as `nobody`: List, Has, GetManagedObjects and Properties.GetAll succeed; Properties.Set is refused with AccessDenied. The CI bus is permissive, so this is the only check of the policy file | Ready |
 | C-8 | `sudo ./capabilities.sh mcelog` | Any; also run on the Ryzen desktop (§12 item 14) | Ready |
 
-`sudo ./capabilities.sh all` runs C-1, C-5, C-6, C-7, and C-8 in one go. Exit codes: 0 pass,
+`sudo ./capabilities.sh all` runs C-1 and C-5 to C-9 in one go. Exit codes: 0 pass,
 1 fail, 77 skipped.
 
 With a webcam connected, check presence with `state --present camera`. With several
