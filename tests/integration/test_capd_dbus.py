@@ -235,6 +235,21 @@ class CapdDBusTest(dbusmock.DBusTestCase if dbus is not None else unittest.TestC
         self.assertTrue(self.manager().Has("battery"))
         self.assertIsNone(self.capd.poll(), "capd must keep running")
 
+    def test_transport_error_keeps_previous_state(self):
+        """A read failure on a present capability keeps it present (no Removed/Added flap)."""
+        self.start_capd()
+        self.start_watch()
+        self.assertEqual(self.next_watch_line(), "+battery")
+        self.systemd_mock.RemoveObject(unit_path("obscura-cap-battery.target"))
+        self.systemd_mock.EmitSignal(SYSTEMD_MANAGER, "JobRemoved", "uoss", [
+            dbus.UInt32(3), dbus.ObjectPath("/org/freedesktop/systemd1/job/3"),
+            "obscura-cap-battery.target", "done",
+        ])
+        with self.assertRaises(queue.Empty):
+            self.watch_lines.get(timeout=1.0)
+        self.assertTrue(self.manager().Has("battery"))
+        self.assertIsNone(self.capd.poll(), "capd must keep running")
+
     def test_failed_target_is_absent(self):
         self.set_target("obscura-cap-camera.target", "failed", announce=False)
         self.start_capd()

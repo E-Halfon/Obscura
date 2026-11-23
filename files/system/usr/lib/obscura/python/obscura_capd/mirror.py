@@ -75,12 +75,21 @@ class SystemdMirror:
             raise
 
     def resync(self, name):
-        """Read one target and apply it. If systemd can't be read, the capability is treated
-        as absent (and the failure is reported): absent is always the safe state."""
+        """Read one target and apply it.
+
+        A DBus transport error (GLib.Error: timeout, systemd busy or restarting) keeps the
+        previous state and is only reported, so a transient failure can't make a present
+        capability flap Removed/Added. The next job or reload resyncs. At startup there is
+        no previous state, so the capability stays absent. Any other error (a reply we
+        can't interpret) is reported and the capability is treated as absent, the safe
+        state."""
         try:
             declaration = self._vocabulary[name]
             try:
                 load_state, active_state, since = self._read_target(declaration.target)
+            except GLib.Error as error:
+                report.failure("SystemdMirror.resync(" + name + "): transport error, keeping previous state", error)
+                return
             except Exception as error:
                 report.failure("SystemdMirror.resync(" + name + ")", error)
                 self._apply(name, False, 0)
