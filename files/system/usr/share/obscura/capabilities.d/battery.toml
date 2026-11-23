@@ -8,3 +8,4 @@ api     = 1
 kind    = "device"
 target  = "obscura-cap-battery.target"
 summary = "A system battery"
+attachable = false   # an internal battery can't be connected by the user

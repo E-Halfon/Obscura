@@ -1,0 +1,27 @@
+# pack-wine: the first factory pack (build-brief task 0.21; delivered in task 0.4).
+# Format: ARCHITECTURE.md §17.1. Catalog row: PACKS.md §4.
+[pack]
+name      = "pack-wine"
+api       = 1
+version   = "0.1.0"          # the real Wine version is set in task 0.4
+platform  = "windows"
+technique = "reimplementation"
+summary   = "Runs Windows programs directly, without a Windows install."
+status    = "mature"
+runtime   = true
+
+[handles]
+magic      = ["mz"]          # PE vs plain DOS is told apart by the dispatcher (task 0.24)
+installers = [".msi"]        # .msix and Store packages go to pack-windows-vm (§18.5)
+extensions = [".bat"]
+
+[requires]
+# Neither is declared by capd until task 0.2b; until then readiness says
+# "this version of Obscura can't detect it yet".
+capabilities = ["x86-64-v3", "vulkan-1.3"]
+
+[fallback]
+remote = false
+
+[touches]
+devices = ["/dev/dri"]

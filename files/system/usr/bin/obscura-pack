@@ -1,0 +1,6 @@
+#!/bin/sh
+# Camera Obscura pack tool, for development and tests.
+# Never required of users (ARCHITECTURE.md §19). See obscura_packs/cli.py.
+PYTHONPATH=/usr/lib/obscura/python
+export PYTHONPATH
+exec /usr/bin/python3 -P -m obscura_packs.cli "$@"

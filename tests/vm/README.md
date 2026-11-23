@@ -37,3 +37,27 @@ capabilities present: `state --present battery,camera`.
 The camera alternative to USB passthrough is the `vivid` virtual driver. Fedora builds it
 (`CONFIG_VIDEO_VIVID=m`), but it may live in a modules package Aurora doesn't install:
 check `modinfo vivid` in the VM.
+
+# VM tests: pack format (task 0.21)
+
+`packs.sh` checks pack manifests and readiness on the built image (P-1…P-7, build brief
+§7 "Stage 0 — pack format"). The unit tests and `tests/integration/test_packs_capd.py`
+run in CI.
+
+1. Copy the whole `tests/` directory into the VM. The script reads `tests/fixtures/`, or
+   set `OBSCURA_FIXTURES` to its location.
+2. Run it as your **normal user**, not root: readiness is per user. It uses a scratch home
+   and a scratch installed root, so your real `~/Obscura` and `/var/lib/obscura/packs`
+   are never touched.
+
+| ID | Command | Setup | Status |
+|---|---|---|---|
+| P-1 | `./packs.sh factory` | Any | Ready |
+| P-2 | `./packs.sh wine` | Any. Expects **Insufficient hardware**. Before task 0.2b the reasons are `capability-unknown` for both capabilities; after 0.2b, `vulkan-1.3` is absent, because the VM has no hardware-accelerated Vulkan. Ready is checked on the bare-metal desktop | Ready |
+| P-3 | `./packs.sh no-reqs` | Any | Ready |
+| P-4 | `./packs.sh camera` | Webcam disconnected at start; the script asks you to connect and then disconnect it through *VM → Removable Devices* (as in C-3) | Ready (interactive) |
+| P-5 | `./packs.sh files` | Any. Writes generated test content only, never real firmware | Ready |
+| P-6 | `./packs.sh removed` | Any | Ready |
+| P-7 | `./packs.sh malformed` | Any | Ready |
+
+`./packs.sh all` runs everything except P-4. Exit codes: 0 pass, 1 fail, 77 skipped.

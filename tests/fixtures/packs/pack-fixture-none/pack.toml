@@ -1,0 +1,11 @@
+# Test fixture for tests/unit, tests/integration, and tests/vm/packs.sh. Never shipped.
+[pack]
+name      = "pack-fixture-none"
+api       = 1
+version   = "1.0"
+platform  = "retro"
+technique = "emulation"
+summary   = "Test pack with no requirements."
+
+[handles]
+extensions = [".obscuratest"]

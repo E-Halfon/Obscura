@@ -133,8 +133,9 @@ have Obscura handle only signaling and audio routing. See §8.
 
 The mechanism that makes one image work across three very different machines.
 
-**A capability is:** a declared feature, a hardware detection rule, the services it
-activates, and the UI surfaces it exposes. Nothing more.
+**A capability is:** a declared feature, a hardware detection rule, whether the user can
+fix its absence by connecting something (`attachable`, used by pack readiness §17.3), the
+services it activates, and the UI surfaces it exposes. Nothing more.
 
 | Capability | Detection | Activates | Present on |
 |---|---|---|---|
@@ -691,6 +692,21 @@ stays inside portable devices (small, ~1 W); the Switch belongs in a home coproc
 - **Every implementation is a separate pack; system bundles group them (§17)**
 - **Pack system, dispatcher, compatibility database, and per-app overrides are Stage 0
   work, built in pack form from day one (§17–§18)**
+- **Pack manifest v1 (task 0.21):**
+  - strict TOML; invalid or unexpected means skipped and reported (fail closed)
+  - `api_minor` feature level: above the supported level gives *Needs a newer Obscura*,
+    not a validation error (§17.4)
+  - magic names come from a core signature registry
+  - factory packs live in `/usr/share/obscura/packs`; installed packs live in
+    `/var/lib/obscura/packs` with an atomic `current` symlink and a `removed` marker
+  - user files go in `~/Obscura/firmware/<files_dir>/`, shared per console (§17.1)
+- **Readiness (task 0.21):** an absent capability that isn't attachable gives
+  *Insufficient hardware*, which wins; *Missing hardware* only when every absent one is
+  attachable. `attachable` is a field of each capability declaration, not inferred from
+  its detection kind. Two states were added,
+  *Needs another pack* and *Couldn't evaluate*, and an error never yields Ready (§17.3).
+  Readiness is per user, so it's evaluated in the user's session, and the system pack
+  daemon only installs (task 0.22)
 - **GUI-first: no normal task requires a terminal (§19)**
 - **KDE Plasma as the desktop shell, stripped and themed; no custom wlroots compositor**
 - **Typed action API as the single path for changing settings (§20)**
@@ -937,10 +953,12 @@ Every pack declares:
 
 ```toml
 [pack]
-name     = "pack-macos-neo"
-platform = "macos"
-version  = "1.0"
-api      = 1
+name      = "pack-macos-neo"
+api       = 1
+version   = "1.0"
+platform  = "macos"
+technique = "coprocessor"
+summary   = "Runs Mac apps on the Apple coprocessor, in ordinary Obscura windows."
 
 [handles]
 magic      = ["mach-o", "mach-o-fat"]
@@ -952,6 +970,36 @@ capabilities = ["apple-coprocessor", "hw-decode-hevc"]
 [fallback]
 remote = true   # use a coprocessor on another of your devices if reachable
 ```
+
+**Manifest v1 (`pack.toml`, `api = 1`, task 0.21).** The manifest is strict TOML: an
+unknown table or key is an error, so a typo can't pass silently. A manifest that fails
+validation is reported and skipped. It never stops other packs from loading, and it's
+never shown as a broken pack. If anything unexpected happens during validation, the
+manifest counts as invalid (fail closed). New fields within api 1 come with a new
+feature level, `pack.api_minor` (§17.4).
+
+| Table | Keys |
+|---|---|
+| `[pack]` | `name` (`pack-…`, equals its directory), `api`, `api_minor` (default 0), `version`, `platform`, `technique`, `summary`; optional `status`, `runtime` (true only for runtime packs), `files_dir` |
+| `[handles]` | `magic` (names from the core signature registry `/usr/share/obscura/signatures.toml`: packs never define magic bytes), `installers`, `extensions` |
+| `[requires]` / `[recommends]` | `capabilities`: PACKS.md §2 names. A missing recommended capability is a note, not a readiness failure |
+| `[depends]` | `runtime`: only packs with `runtime = true`; a runtime pack has no `[depends]` |
+| `[[user_supplies]]` | `id`, `label`, `kind` (firmware, bios, keys, rom-set, os-image, media), `file` (a bare file name), `sha256` (a list: required except for os-image and media), `required` |
+| `[fallback]` | `remote` |
+| `[provides]` | `actions`, `triggers` (names; schemas come from the action API, §20) |
+| `[touches]` | `kernel_modules` (needs explicit approval), `devices` (under `/dev/`) |
+
+**User-supplied files** go in `~/Obscura/firmware/<files_dir>/`. `files_dir` defaults to
+the pack name without `pack-`. **Packs for the same console share `files_dir`, named after
+the console** (`ps1`, `ps2`, `ps3`, `gc`, `n64`, …). For example, `pack-duckstation` and
+`pack-mednafen` both use `ps1`, so the user places a BIOS once.
+
+**On disk:** packs shipped in the image (the *factory* copy) live in
+`/usr/share/obscura/packs/<name>/`. They're read-only and update and roll back with the
+image. Packs the manager installs live in `/var/lib/obscura/packs/<name>/<version>/`, with
+a `current` symlink swapped atomically. An installed `current` takes precedence over the
+factory copy. A `removed` marker in `/var/lib/obscura/packs/<name>/` hides a factory pack
+(like `systemctl mask`). A broken `current` falls back to the factory copy and is reported.
 
 ### 17.2 System bundles
 
@@ -983,10 +1031,34 @@ Each device evaluates every installed pack against its own capabilities and repo
 | **Missing hardware** | "macOS apps need an Apple coprocessor. None detected or reachable." |
 | **Missing files** | "PS6 pack needs system firmware you supply. Place it in ~/Obscura/firmware/ps6." |
 | **Insufficient hardware** | "Needs a dGPU with Vulkan 1.4. This device has an iGPU." |
+| **Needs another pack** | "Steam VR games need the Proton pack. Install it?" |
+| **Couldn't evaluate** | "Obscura couldn't check this pack. Copy diagnostics." Never treated as ready |
+| **Needs a newer Obscura** | "This pack needs a newer version of Obscura. Update?" (its `api_minor` is higher than this Obscura supports) |
+
+**How the state is chosen.** Every reason is collected, so the user sees every fix at
+once. The state is then picked in this order:
+1. **Hardware.** A required capability is absent, or the pack is marked "not on this
+   device". If `fallback.remote` is set and a peer can run the pack, the state is
+   **Remote**. Otherwise it's **Insufficient hardware** if any absent capability isn't
+   attachable, or can't be detected by this Obscura, because telling the user to connect
+   something wouldn't fix it. Only when every absent capability is attachable is it
+   **Missing hardware**. Each capability declaration says `attachable = true/false`
+   (PACKS.md §2), independently of how it's detected (`kind`): a discrete GPU is detected
+   by udev but isn't attachable. "Not on this device" counts as not attachable.
+2. **Runtime.** The runtime pack isn't installed: **Needs another pack**. It's installed
+   but not ready: the dependent pack takes the runtime's state.
+3. **Files.** A required user file is absent or matches no listed checksum: **Missing
+   files**.
+4. Otherwise **Ready**.
+
+An unexpected error anywhere in evaluation gives **Couldn't evaluate**, never Ready, and
+the error is reported. Readiness is per user, because the files are in `~`.
 
 Installed packs sync across devices; each device judges its own readiness. A pack can be
-marked "not on this device" (e.g. no Windows VM on the pocket computer) so it shows as
-"runs remotely" instead of installing.
+marked "not on this device" (e.g. no Windows VM on the pocket computer). It then isn't
+run locally. If the pack allows remote use (`fallback.remote`) and a peer can run it,
+it shows as **Remote** ("runs on your desktop"). Otherwise it shows **Insufficient
+hardware** with "Set not to run on this device" and a button to allow it here.
 
 ### 17.4 Rules
 
@@ -994,11 +1066,28 @@ marked "not on this device" (e.g. no Windows VM on the pocket computer) so it sh
   Neo use the same format as a future PS6 pack, the format is tested by real use.
 - **The image may ship packs preinstalled, but they remain real packs** — each with a
   manifest, and the pack manager can update or remove them like any other. The core holds
-  only kernel-level support: binder/binderfs, KVM, and `binfmt_misc`.
+  only kernel-level support (binder/binderfs, KVM, and `binfmt_misc`), plus the signature
+  registry (`/usr/share/obscura/signatures.toml`): the magic bytes that packs refer to
+  by name, so no pack defines its own `binfmt_misc` handler (§17.1).
 - **The pack API is the stable contract.** Versioned from day one (`api = 1`). It must
   outlive any individual emulator.
+- **`api` is the major version; `api_minor` is the feature level within it.**
+  - `api_minor` is an integer and defaults to 0. Each Obscura release defines the highest
+    `api_minor` it supports. New optional manifest fields raise that level.
+  - A manifest **at or below** the supported level is validated strictly: an unknown key
+    is still an error, so typos are caught.
+  - A manifest **above** the supported level isn't rejected for keys it doesn't know,
+    because they may be the newer features. Only its `[pack]` identity is checked, and
+    nothing else in it is used. It's listed with **Needs a newer Obscura** and an
+    "update Obscura" fix, and never routed to. That matters because installed packs sync
+    to devices that may run an older Obscura.
+  - A higher `api` (major) is an invalid manifest that says it needs a newer Obscura.
 - **Packs depend on core services, not on each other** — except one level deep on runtime
   packs (`pack-wine`, `pack-proton`).
+  **Only factory packs (shipped in the image) may declare `runtime = true`** for now, so an
+  installed pack can't make itself a dependency target. An installed runtime pack is
+  rejected and the factory copy is used. Signed repository packs become eligible in
+  task 0.23.
 - **Packs are signed, run in userspace wherever possible, and declare what they touch.**
   A pack needing a kernel module requires explicit approval.
 - **Packs never bundle copyrighted firmware, keys, or OS images** (§14.2).

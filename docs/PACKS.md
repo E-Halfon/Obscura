@@ -36,6 +36,11 @@ Every pack declares:
 | **User supplies** | Files the user must provide. **Packs never bundle firmware, BIOS, ROMs, or keys** |
 | **Status** | Mature, Usable, Experimental, or Planned |
 
+These are the catalog's columns. The full manifest format (`pack.toml`, `api = 1`) is in
+ARCHITECTURE.md §17.1. User-supplied files go in `~/Obscura/firmware/<files_dir>/`. Packs
+for the same console share `files_dir`, named after the console (`ps1`, `ps2`, …), so a
+BIOS is placed once.
+
 ### 1.2 Device columns
 
 | Symbol | Meaning |
@@ -107,32 +112,39 @@ Capabilities are **hardware facts only**. Whether a platform is usable (`windows
 `android-apps`) is pack readiness, reported by the pack manager (ARCHITECTURE.md §17.3),
 not by the capability service.
 
+**Attachable** says whether the user can fix an absence by connecting something. If any
+absent required capability isn't attachable, readiness is *Insufficient hardware*;
+otherwise it's *Missing hardware* (ARCHITECTURE.md §17.3). It's declared in each
+capability file (`attachable = true/false`), independently of the kind. A discrete GPU
+is `no`: a laptop with only an iGPU "has insufficient hardware" rather than being told
+to connect one.
+
 **Kind** says how the capability is detected: **static** (a fixed fact checked at boot),
 **device** (udev; appears and disappears with hotplug), **probe** (a peer answers over a
 link). The first three implemented are `virt`, `battery`, and `camera` (build-brief task 0.2).
 
-| Capability | Kind | Meaning | D | L | P |
-|---|---|---|---|---|---|
-| `x86-64-v3` | static | AVX2, BMI2, FMA | ✔ | ✔ | ✔ |
-| `avx512` | static | AVX-512 (helps RPCS3) | ✔ Zen 4/5 | ✔ Zen 4 | ✘ |
-| `vulkan-1.3` | static | Vulkan 1.3 via Mesa (RADV/ANV) | ✔ | ✔ | ✔ |
-| `dgpu` | device | Discrete GPU | ✔ | ✘ | ✘ |
-| `virt` | device | AMD-V / VT-x, usable by KVM (`/dev/kvm` exists) | ✔ | ✔ | ✔ |
-| `iommu` | static | AMD-Vi / VT-d with usable groups | ✔ | ✔ | ✔ |
-| `gpu-passthrough` | static | Second GPU for a VM, or SR-IOV iGPU | ✔ | ~ | ✘ |
-| `hw-encode` | static | Hardware video encode (VA-API) | ✔ | ✔ | ✔ |
-| `hw-decode-hevc` | static | Hardware HEVC decode | ✔ | ✔ | ✔ |
-| `apple-coprocessor` | probe | Neo board reachable over the coprocessor link | opt | opt | opt |
-| `capture-device` | device | UVC/V4L2 HDMI capture at 1080p60 | opt | opt | ✘ |
-| `controller-emulator` | device | RP2040-class board emulating a console pad | opt | opt | ✘ |
-| `xr-headset` | device | VR headset supported by the OpenXR runtime | opt | opt | ✘ |
-| `ram-16g` / `ram-32g` | static | Memory threshold | ✔ | ✔ | ~ |
-| `network-lan` | probe | Local network to a peer device or console | ✔ | ✔ | ✔ |
-| `battery` | device | System battery (`power_supply`, type Battery, not a peripheral's) | ✘ | ✔ | ✔ |
-| `camera` | device | V4L2 video capture node (UVC or CSI) | ✔ | ✔ | ✔ |
-| `touch` | device | Touchscreen | opt | opt | ✔ |
-| `telephony` | device | USB-attached cellular modem with voice (IMS in modem firmware) | opt | ✔ | ✔ |
-| `gps` | device | Location fix from the modem or a GNSS receiver | opt | ✔ | ✔ |
+| Capability | Kind | Attachable | Meaning | D | L | P |
+|---|---|---|---|---|---|---|
+| `x86-64-v3` | static | no | AVX2, BMI2, FMA | ✔ | ✔ | ✔ |
+| `avx512` | static | no | AVX-512 (helps RPCS3) | ✔ Zen 4/5 | ✔ Zen 4 | ✘ |
+| `vulkan-1.3` | static | no | Vulkan 1.3 via Mesa (RADV/ANV) | ✔ | ✔ | ✔ |
+| `dgpu` | device | no | Discrete GPU | ✔ | ✘ | ✘ |
+| `virt` | device | no | AMD-V / VT-x, usable by KVM (`/dev/kvm` exists) | ✔ | ✔ | ✔ |
+| `iommu` | static | no | AMD-Vi / VT-d with usable groups | ✔ | ✔ | ✔ |
+| `gpu-passthrough` | static | no | Second GPU for a VM, or SR-IOV iGPU | ✔ | ~ | ✘ |
+| `hw-encode` | static | no | Hardware video encode (VA-API) | ✔ | ✔ | ✔ |
+| `hw-decode-hevc` | static | no | Hardware HEVC decode | ✔ | ✔ | ✔ |
+| `apple-coprocessor` | probe | yes | Neo board reachable over the coprocessor link | opt | opt | opt |
+| `capture-device` | device | yes | UVC/V4L2 HDMI capture at 1080p60 | opt | opt | ✘ |
+| `controller-emulator` | device | yes | RP2040-class board emulating a console pad | opt | opt | ✘ |
+| `xr-headset` | device | yes | VR headset supported by the OpenXR runtime | opt | opt | ✘ |
+| `ram-16g` / `ram-32g` | static | no | Memory threshold | ✔ | ✔ | ~ |
+| `network-lan` | probe | yes | Local network to a peer device or console | ✔ | ✔ | ✔ |
+| `battery` | device | no | System battery (`power_supply`, type Battery, not a peripheral's) | ✘ | ✔ | ✔ |
+| `camera` | device | yes | V4L2 video capture node (UVC or CSI) | ✔ | ✔ | ✔ |
+| `touch` | device | no | Touchscreen | opt | opt | ✔ |
+| `telephony` | device | yes | USB-attached cellular modem with voice (IMS in modem firmware) | opt | ✔ | ✔ |
+| `gps` | device | yes | Location fix from the modem or a GNSS receiver | opt | ✔ | ✔ |
 
 ---
 

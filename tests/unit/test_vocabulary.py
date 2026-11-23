@@ -16,6 +16,7 @@ api     = 1
 kind    = "device"
 target  = "obscura-cap-battery.target"
 summary = "A system battery"
+attachable = false
 """
 
 
@@ -26,6 +27,7 @@ def declaration_text(**overrides):
         "kind": '"device"',
         "target": '"obscura-cap-battery.target"',
         "summary": '"A system battery"',
+        "attachable": "false",
     }
     fields.update(overrides)
     lines = ["[capability]"]
@@ -67,6 +69,9 @@ class ParseDeclarationTest(ReportCapture):
             # Pack availability is not a capability kind (pack manager owns it, 0.21).
             "kind pack": declaration_text(kind='"pack"'),
             "empty summary": declaration_text(summary='"  "'),
+            "missing attachable": declaration_text(attachable=None),
+            "attachable string": declaration_text(attachable='"yes"'),
+            "attachable int": declaration_text(attachable="1"),
         }
         for label, text in cases.items():
             with self.subTest(label):

@@ -30,6 +30,19 @@ def packs_vocabulary():
     return rows
 
 
+def packs_attachable():
+    """{name: True/False} from the Attachable column of the PACKS.md §2 table."""
+    text = read(os.path.join(REPO_ROOT, "docs", "PACKS.md"))
+    section = text.split("## 2. Capability vocabulary", 1)[1].split("\n## ", 1)[0]
+    rows = {}
+    for line in section.splitlines():
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if len(cells) >= 3 and cells[0].startswith("`"):
+            for name in re.findall(r"`([^`]+)`", cells[0]):
+                rows[name] = {"yes": True, "no": False}.get(cells[2])
+    return rows
+
+
 class ConsistencyTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -87,6 +100,13 @@ class ConsistencyTest(unittest.TestCase):
             with self.subTest(name):
                 self.assertIn(name, documented, name + " is declared but not in PACKS.md §2")
                 self.assertEqual(documented[name], declaration.kind)
+
+    def test_attachable_matches_packs_md(self):
+        documented = packs_attachable()
+        self.assertTrue(all(value is not None for value in documented.values()), documented)
+        for name, declaration in self.vocabulary.items():
+            with self.subTest(name):
+                self.assertEqual(documented[name], declaration.attachable)
 
     def test_no_pack_capabilities_in_vocabulary(self):
         documented = packs_vocabulary()

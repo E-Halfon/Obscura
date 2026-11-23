@@ -1,0 +1,9 @@
+# Deliberately malformed (P-7): unknown key and a bad api.
+[pack]
+name = "pack-fixture-broken"
+api = "one"
+version = "1.0"
+platform = "retro"
+technique = "emulation"
+summary = "Broken."
+colour = "red"

@@ -15,6 +15,10 @@ from obscura_capd.constants import MESSAGE_ID_FAILURE, MESSAGE_ID_NOTICE
 
 _REPORTED_MARK = "_obscura_reported"
 
+# Who is reporting: the stderr prefix and the journal SYSLOG_IDENTIFIER. Other Obscura
+# components that reuse this module (obscura_packs) set their own name.
+_identifier = "obscura-capd"
+
 try:
     from systemd import journal as _journal
 except ImportError:
@@ -29,6 +33,20 @@ def _under_systemd():
         return False
 
 
+def set_identifier(name):
+    """Report as `name` (e.g. "obscura-pack") instead of obscura-capd."""
+    global _identifier
+    try:
+        _identifier = str(name)
+    except Exception as error:
+        # Keep the previous identifier; say so on stderr, the one channel left that
+        # doesn't depend on this module's state.
+        try:
+            print(_identifier + ": could not set report identifier: " + repr(error), file=sys.stderr, flush=True)
+        except Exception:
+            pass  # stderr itself is unusable: there is nowhere left to report
+
+
 def _send(priority, message_id, message, fields):
     """Write one entry to stderr, always. Under systemd, stderr already reaches the
     journal; there we additionally send a structured entry carrying the MESSAGE_ID for
@@ -36,7 +54,7 @@ def _send(priority, message_id, message, fields):
     output is visible wherever capd runs (tests, a terminal, CI)."""
     try:
         extra = " ".join(key + "=" + str(value) for key, value in fields.items())
-        print("obscura-capd: " + message + (" " + extra if extra else ""), file=sys.stderr, flush=True)
+        print(_identifier + ": " + message + (" " + extra if extra else ""), file=sys.stderr, flush=True)
     except Exception:
         pass
     try:
@@ -45,13 +63,13 @@ def _send(priority, message_id, message, fields):
                 message,
                 MESSAGE_ID=message_id,
                 PRIORITY=str(priority),
-                SYSLOG_IDENTIFIER="obscura-capd",
+                SYSLOG_IDENTIFIER=_identifier,
                 **fields,
             )
     except Exception:
         # Reporting must never take the service down; the stderr line above was written.
         try:
-            print("obscura-capd: could not send structured journal entry: " + message,
+            print(_identifier + ": could not send structured journal entry: " + message,
                   file=sys.stderr, flush=True)
         except Exception:
             pass

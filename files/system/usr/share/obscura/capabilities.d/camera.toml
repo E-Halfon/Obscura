@@ -8,3 +8,4 @@ api     = 1
 kind    = "device"
 target  = "obscura-cap-camera.target"
 summary = "A video capture camera (UVC or CSI)"
+attachable = true   # a USB webcam can be connected
