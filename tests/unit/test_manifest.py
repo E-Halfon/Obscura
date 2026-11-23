@@ -192,6 +192,51 @@ class ParseManifestTest(ReportCapture):
             parse_manifest(VALID, "pack.toml", frozenset())
 
 
+class ApiMinorTest(ReportCapture):
+    """pack.api_minor: the feature level within api 1 (ARCHITECTURE.md §17.4)."""
+
+    NEWER = replace(VALID, "api       = 1", "api       = 1\napi_minor = 1\nfuture_field = true") \
+        + "\n[future_table]\nx = 1\n"
+
+    def test_default_is_zero(self):
+        pack = parse_manifest(VALID, "pack.toml", SIGNATURES)
+        self.assertEqual(pack.api_minor, 0)
+        self.assertFalse(pack.needs_newer)
+
+    def test_unknown_key_at_the_supported_level_is_still_an_error(self):
+        # Typo detection stays on for every level this Obscura understands.
+        explicit = replace(VALID, "api       = 1", "api       = 1\napi_minor = 0\nfuture_field = true")
+        with self.assertRaisesRegex(ManifestError, "unknown key"):
+            parse_manifest(explicit, "pack.toml", SIGNATURES)
+        with mock.patch.object(manifest, "API_MINOR", 1):
+            with self.assertRaisesRegex(ManifestError, "unknown"):
+                parse_manifest(self.NEWER, "pack.toml", SIGNATURES)
+
+    def test_higher_level_is_listed_as_needing_a_newer_obscura(self):
+        pack = parse_manifest(self.NEWER, "pack.toml", SIGNATURES, "pack-example")
+        self.assertTrue(pack.needs_newer)
+        self.assertEqual(pack.api_minor, 1)
+        self.assertEqual(pack.name, "pack-example")
+        # Nothing beyond [pack] is used from a manifest this Obscura can't fully read.
+        self.assertEqual((pack.magic, pack.requires, pack.user_supplies), ((), (), ()))
+
+    def test_higher_level_still_checks_the_pack_identity(self):
+        for bad in (replace(self.NEWER, '"pack-example"', '"Example"'),
+                    replace(self.NEWER, "api       = 1", "api       = 2")):
+            with self.subTest(bad[:40]):
+                with self.assertRaises(ManifestError):
+                    parse_manifest(bad, "pack.toml", SIGNATURES)
+        with self.assertRaises(ManifestError):
+            parse_manifest(self.NEWER, "pack.toml", SIGNATURES, "pack-other")
+
+    def test_bad_api_minor(self):
+        for value in ("-1", "true", '"1"', "1.5"):
+            with self.subTest(value):
+                with self.assertRaises(ManifestError):
+                    parse_manifest(replace(VALID, "api       = 1", "api       = 1\napi_minor = " + value),
+                                   "pack.toml", SIGNATURES)
+
+
 class FailClosedTest(ReportCapture):
     """An unexpected exception never yields a valid manifest (CLAUDE.md, 0.21 review)."""
 

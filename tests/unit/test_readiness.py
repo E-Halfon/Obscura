@@ -11,6 +11,7 @@ from obscura_packs.constants import (
     INSUFFICIENT_HARDWARE,
     MISSING_FILES,
     MISSING_HARDWARE,
+    NEEDS_NEWER_OBSCURA,
     NEEDS_PACK,
     READY,
     REMOTE,
@@ -132,6 +133,14 @@ class ReadinessTest(unittest.TestCase):
         result = evaluate(pack(recommends=["dgpu"]), frozenset(), VOCABULARY)
         self.assertEqual(result.state, READY)
         self.assertIn("discrete GPU", result.notes[0])
+
+    def test_newer_manifest_needs_a_newer_obscura(self):
+        text = ('[pack]\nname = "pack-future"\napi = 1\napi_minor = 7\nversion = "1"\nplatform = "retro"\n'
+                'technique = "emulation"\nsummary = "Future."\nshiny = true\n')
+        manifest = parse_manifest(text, "pack.toml", frozenset())
+        result = evaluate(manifest, frozenset(), VOCABULARY)
+        self.assertEqual(result.state, NEEDS_NEWER_OBSCURA)
+        self.assertEqual(result.reasons[0].fix, readiness.FIX_UPDATE_OBSCURA)
 
     # -- precedence --------------------------------------------------------------------
 

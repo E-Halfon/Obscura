@@ -42,6 +42,7 @@ A pack shipped in the image goes in
 [pack]
 name      = "pack-example"
 api       = 1
+# api_minor = 0              # feature level; raise only when using fields from a newer level (§17.4)
 version   = "0.1.0"
 platform  = "retro"
 technique = "emulation"

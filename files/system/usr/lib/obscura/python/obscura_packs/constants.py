@@ -4,6 +4,10 @@ pack (ARCHITECTURE.md §17.4: the pack API is the stable contract)."""
 import re
 
 API_VERSION = 1
+# Highest manifest feature level (pack.api_minor) this Obscura understands. A manifest
+# with a higher api_minor isn't rejected for keys it doesn't know; its readiness is
+# "Needs a newer Obscura" (ARCHITECTURE.md §17.4).
+API_MINOR = 0
 
 # Same rule as capability names (obscura_capd.vocabulary.NAME_PATTERN).
 NAME_PATTERN = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
@@ -39,8 +43,9 @@ INSUFFICIENT_HARDWARE = "insufficient-hardware"
 NEEDS_PACK = "needs-pack"
 MISSING_FILES = "missing-files"
 UNEVALUABLE = "unevaluable"
+NEEDS_NEWER_OBSCURA = "needs-newer-obscura"
 STATES = (READY, REMOTE, MISSING_HARDWARE, INSUFFICIENT_HARDWARE, NEEDS_PACK, MISSING_FILES,
-          UNEVALUABLE)
+          UNEVALUABLE, NEEDS_NEWER_OBSCURA)
 # States in which the dispatcher may route to the pack (ARCHITECTURE.md §18.2).
 RUNNABLE_STATES = (READY, REMOTE)
 

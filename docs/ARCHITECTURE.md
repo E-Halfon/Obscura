@@ -693,6 +693,8 @@ stays inside portable devices (small, ~1 W); the Switch belongs in a home coproc
   work, built in pack form from day one (§17–§18)**
 - **Pack manifest v1 (task 0.21):**
   - strict TOML; invalid or unexpected means skipped and reported (fail closed)
+  - `api_minor` feature level: above the supported level gives *Needs a newer Obscura*,
+    not a validation error (§17.4)
   - magic names come from a core signature registry
   - factory packs live in `/usr/share/obscura/packs`; installed packs live in
     `/var/lib/obscura/packs` with an atomic `current` symlink and a `removed` marker
@@ -970,12 +972,12 @@ remote = true   # use a coprocessor on another of your devices if reachable
 unknown table or key is an error, so a typo can't pass silently. A manifest that fails
 validation is reported and skipped. It never stops other packs from loading, and it's
 never shown as a broken pack. If anything unexpected happens during validation, the
-manifest counts as invalid (fail closed). Optional fields may be added within api 1 only
-if every existing api-1 manifest still validates.
+manifest counts as invalid (fail closed). New fields within api 1 come with a new
+feature level, `pack.api_minor` (§17.4).
 
 | Table | Keys |
 |---|---|
-| `[pack]` | `name` (`pack-…`, equals its directory), `api`, `version`, `platform`, `technique`, `summary`; optional `status`, `runtime` (true only for runtime packs), `files_dir` |
+| `[pack]` | `name` (`pack-…`, equals its directory), `api`, `api_minor` (default 0), `version`, `platform`, `technique`, `summary`; optional `status`, `runtime` (true only for runtime packs), `files_dir` |
 | `[handles]` | `magic` (names from the core signature registry `/usr/share/obscura/signatures.toml`: packs never define magic bytes), `installers`, `extensions` |
 | `[requires]` / `[recommends]` | `capabilities`: PACKS.md §2 names. A missing recommended capability is a note, not a readiness failure |
 | `[depends]` | `runtime`: only packs with `runtime = true`; a runtime pack has no `[depends]` |
@@ -1028,6 +1030,7 @@ Each device evaluates every installed pack against its own capabilities and repo
 | **Insufficient hardware** | "Needs a dGPU with Vulkan 1.4. This device has an iGPU." |
 | **Needs another pack** | "Steam VR games need the Proton pack. Install it?" |
 | **Couldn't evaluate** | "Obscura couldn't check this pack. Copy diagnostics." Never treated as ready |
+| **Needs a newer Obscura** | "This pack needs a newer version of Obscura. Update?" (its `api_minor` is higher than this Obscura supports) |
 
 **How the state is chosen.** Every reason is collected, so the user sees every fix at
 once. The state is then picked in this order:
@@ -1058,6 +1061,17 @@ marked "not on this device" (e.g. no Windows VM on the pocket computer) so it sh
   only kernel-level support: binder/binderfs, KVM, and `binfmt_misc`.
 - **The pack API is the stable contract.** Versioned from day one (`api = 1`). It must
   outlive any individual emulator.
+- **`api` is the major version; `api_minor` is the feature level within it.**
+  - `api_minor` is an integer and defaults to 0. Each Obscura release defines the highest
+    `api_minor` it supports. New optional manifest fields raise that level.
+  - A manifest **at or below** the supported level is validated strictly: an unknown key
+    is still an error, so typos are caught.
+  - A manifest **above** the supported level isn't rejected for keys it doesn't know,
+    because they may be the newer features. Only its `[pack]` identity is checked, and
+    nothing else in it is used. It's listed with **Needs a newer Obscura** and an
+    "update Obscura" fix, and never routed to. That matters because installed packs sync
+    to devices that may run an older Obscura.
+  - A higher `api` (major) is an invalid manifest that says it needs a newer Obscura.
 - **Packs depend on core services, not on each other** — except one level deep on runtime
   packs (`pack-wine`, `pack-proton`).
   **Only factory packs (shipped in the image) may declare `runtime = true`** for now, so an

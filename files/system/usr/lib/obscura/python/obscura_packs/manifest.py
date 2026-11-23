@@ -13,6 +13,7 @@ from dataclasses import dataclass
 
 from obscura_capd import report
 from obscura_packs.constants import (
+    API_MINOR,
     API_VERSION,
     CAPABILITY_NAME_PATTERN,
     CHECKSUM_OPTIONAL_KINDS,
@@ -70,11 +71,15 @@ class Manifest:
     kernel_modules: tuple
     devices: tuple
     source: str
+    api_minor: int = 0
+    # True when api_minor is higher than this Obscura supports: only [pack] was checked,
+    # and readiness is "Needs a newer Obscura". Never routed to.
+    needs_newer: bool = False
 
 
 # Allowed keys per table. Anything else is an error (strict, catches typos).
 _TABLE_KEYS = {
-    "pack": {"name", "api", "version", "platform", "technique", "summary", "status", "runtime", "files_dir"},
+    "pack": {"name", "api", "api_minor", "version", "platform", "technique", "summary", "status", "runtime", "files_dir"},
     "handles": {"magic", "installers", "extensions"},
     "requires": {"capabilities"},
     "recommends": {"capabilities"},
@@ -377,6 +382,10 @@ def parse_manifest(text, source, signatures, directory_name=None):
         except tomllib.TOMLDecodeError as error:
             raise ManifestError("not valid TOML: " + str(error)) from error
 
+        api_minor = _api_minor(data)
+        if api_minor > API_MINOR:
+            return _parse_newer(data, source, directory_name, api_minor)
+
         tables = _tables(data)
         pack = _validate_pack(tables["pack"])
         if directory_name is not None and directory_name != pack["name"]:
@@ -395,12 +404,50 @@ def parse_manifest(text, source, signatures, directory_name=None):
             magic=magic, installers=installers, extensions=extensions,
             requires=requires, recommends=recommends, depends=depends,
             user_supplies=user_supplies, remote=remote, actions=actions, triggers=triggers,
-            kernel_modules=kernel_modules, devices=devices, source=source, **pack,
+            kernel_modules=kernel_modules, devices=devices, source=source, api_minor=api_minor, **pack,
         )
     except ManifestError:
         raise
     except Exception as error:
         report.failure("manifest.parse_manifest", error)
+        raise
+
+
+def _api_minor(data):
+    """pack.api_minor: the manifest's feature level within api 1 (default 0)."""
+    try:
+        pack = data.get("pack")
+        if not isinstance(pack, dict):
+            raise ManifestError("missing [pack] table")
+        value = _field(pack, "api_minor", int, "pack", default=0)
+        if value < 0:
+            raise ManifestError("'pack.api_minor' must not be negative")
+        return value
+    except ManifestError:
+        raise
+    except Exception as error:
+        report.failure("manifest._api_minor", error)
+        raise
+
+
+def _parse_newer(data, source, directory_name, api_minor):
+    """A manifest written for a newer Obscura (higher api_minor). Keys this Obscura doesn't
+    know aren't errors here: they may be the newer features. Only the [pack] identity is
+    validated, so the pack can be listed with "Needs a newer Obscura"; nothing else in it
+    is trusted or used."""
+    try:
+        pack = _validate_pack(data["pack"])
+        if directory_name is not None and directory_name != pack["name"]:
+            raise ManifestError("directory '" + directory_name + "' must be named after the pack ('" + pack["name"] + "')")
+        return Manifest(
+            magic=(), installers=(), extensions=(), requires=(), recommends=(), depends=(),
+            user_supplies=(), remote=False, actions=(), triggers=(), kernel_modules=(), devices=(),
+            source=source, api_minor=api_minor, needs_newer=True, **pack,
+        )
+    except ManifestError:
+        raise
+    except Exception as error:
+        report.failure("manifest._parse_newer", error)
         raise
 
 

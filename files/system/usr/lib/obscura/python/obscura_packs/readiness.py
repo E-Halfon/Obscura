@@ -19,6 +19,7 @@ from obscura_packs.constants import (
     INSUFFICIENT_HARDWARE,
     MISSING_FILES,
     MISSING_HARDWARE,
+    NEEDS_NEWER_OBSCURA,
     NEEDS_PACK,
     READY,
     REMOTE,
@@ -172,6 +173,10 @@ def _recommendations(manifest, present, vocabulary):
 
 def _evaluate(manifest, present, vocabulary, runtime_states, file_status, not_on_this_device, remote_ready):
     try:
+        if manifest.needs_newer:
+            return Readiness(manifest.name, NEEDS_NEWER_OBSCURA, (Reason(
+                "needs-newer-obscura", manifest.name,
+                "This pack needs a newer version of Obscura.", FIX_UPDATE_OBSCURA),))
         if present is None and (manifest.requires or manifest.recommends):
             return Readiness(manifest.name, UNEVALUABLE, (Reason(
                 "capabilities-unavailable", "obscura-capd",
