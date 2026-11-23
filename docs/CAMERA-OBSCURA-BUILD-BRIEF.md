@@ -389,6 +389,12 @@ accept drift. Shipping beats purity.
     worker.
   - **Kind:** keep `static` if the mechanism allows, so readiness says "Insufficient
     hardware".
+- **Capability names with dots.** `vulkan-1.3` (like any `x.y` version name) can't be
+  declared yet. capd's `NAME_PATTERN` allows only `[a-z0-9-]`, and its object-path
+  mapping (hyphen → underscore) has no encoding for `.`. 0.2b widens the pattern and
+  picks a one-to-one escaping for object paths (e.g. systemd-style `_2e` for `.` and
+  `_2d` for `-`; the current "hyphen → underscore" mapping can't take a second
+  character). Pack manifests already accept dotted names (task 0.21).
 - **Tests:**
   - CI: the acceptance rule against recorded `vulkaninfo --json` fixtures (lavapipe
     only; lavapipe + RADV; VMware SVGA; discrete + integrated), and a lint that every v3

@@ -7,6 +7,9 @@ API_VERSION = 1
 
 # Same rule as capability names (obscura_capd.vocabulary.NAME_PATTERN).
 NAME_PATTERN = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+# Capability names as PACKS.md §2 spells them, which includes dots (vulkan-1.3).
+# capd's own NAME_PATTERN doesn't accept dots yet; task 0.2b widens it.
+CAPABILITY_NAME_PATTERN = re.compile(r"^[a-z0-9]+([.-][a-z0-9]+)*$")
 PACK_NAME_PATTERN = re.compile(r"^pack-[a-z0-9]+(-[a-z0-9]+)*$")
 VERSION_PATTERN = re.compile(r"^[0-9A-Za-z][0-9A-Za-z.+~-]*$")
 SUFFIX_PATTERN = re.compile(r"^\.[a-z0-9]+$")

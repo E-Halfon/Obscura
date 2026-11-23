@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from obscura_capd import report
 from obscura_packs.constants import (
     API_VERSION,
+    CAPABILITY_NAME_PATTERN,
     CHECKSUM_OPTIONAL_KINDS,
     FILE_KINDS,
     HEX_PATTERN,
@@ -261,8 +262,8 @@ def _validate_handles(table, platform, signatures):
 
 def _validate_capabilities(tables):
     try:
-        requires = _string_list(tables["requires"], "capabilities", "requires", NAME_PATTERN)
-        recommends = _string_list(tables["recommends"], "capabilities", "recommends", NAME_PATTERN)
+        requires = _string_list(tables["requires"], "capabilities", "requires", CAPABILITY_NAME_PATTERN)
+        recommends = _string_list(tables["recommends"], "capabilities", "recommends", CAPABILITY_NAME_PATTERN)
         both = set(requires) & set(recommends)
         if both:
             raise ManifestError("both required and recommended: " + ", ".join(sorted(both)))

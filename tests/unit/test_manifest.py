@@ -166,6 +166,15 @@ class ParseManifestTest(ReportCapture):
         # Malformed manifests are expected input: none of these is an internal failure.
         self.assertEqual(self.failures(), [])
 
+    def test_dotted_capability_names(self):
+        # PACKS.md §2 spells versioned capabilities with dots (vulkan-1.3).
+        pack = parse_manifest(replace(VALID, '["x86-64-v3"]', '["x86-64-v3", "vulkan-1.3"]'), "pack.toml", SIGNATURES)
+        self.assertEqual(pack.requires, ("x86-64-v3", "vulkan-1.3"))
+        for bad in ('"vulkan-1..3"', '"vulkan-1."', '".vulkan"', '"vulkan.-1"'):
+            with self.subTest(bad):
+                with self.assertRaises(ManifestError):
+                    parse_manifest(replace(VALID, '"x86-64-v3"', bad), "pack.toml", SIGNATURES)
+
     def test_directory_must_match_name(self):
         with self.assertRaises(ManifestError):
             parse_manifest(VALID, "pack.toml", SIGNATURES, directory_name="pack-other")
