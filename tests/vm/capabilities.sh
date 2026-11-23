@@ -21,12 +21,17 @@ trap 'echo "ERROR: ${FUNCNAME[0]:-main} line ${LINENO}: ${BASH_COMMAND}" >&2' ER
 
 readonly VOCABULARY_DIR=/usr/share/obscura/capabilities.d
 readonly WAIT_SECONDS=2
-FAILURES=0
+SKIPPED=0
+
+# Each test runs in its own subshell (run_test), so failures are recorded in a file
+# rather than a variable, which the subshell couldn't pass back.
+RESULTS=$(mktemp)
+trap 'rm -f "$RESULTS"' EXIT
 
 pass() { echo "PASS: $*"; }
-fail() { echo "FAIL: $*"; FAILURES=$((FAILURES + 1)); }
-# Tests print with skip, then `return 77`; run_test counts that as a skip, not a failure.
-skip() { echo "SKIP: $*"; return 77; }
+fail() { echo "FAIL: $*"; echo "$*" >>"$RESULTS"; }
+# Ends the current test (its subshell) as skipped; run_test counts exit 77 as a skip.
+skip() { echo "SKIP: $*"; exit 77; }
 
 declared() {
     local file
@@ -111,7 +116,6 @@ test_state() {
 test_virt() {
     if [ ! -e /dev/kvm ]; then
         skip "no /dev/kvm: enable 'Virtualize Intel VT-x/EPT or AMD-V/RVI' in VMware (blocked while Hyper-V is on in the host; see README)"
-        return 77
     fi
     if [ "$(has_status virt)" = 0 ]; then
         pass "virt present with /dev/kvm"
@@ -169,7 +173,6 @@ test_hotplug_camera() {
     local cycles=${1:-10}
     if [ ! -t 0 ]; then
         skip "interactive: needs you to connect and disconnect the webcam in VMware"
-        return 77
     fi
     echo "Disconnect the webcam now (VM > Removable Devices > <camera> > Disconnect), then press Enter."
     read -r _
@@ -183,11 +186,9 @@ test_hotplug_battery() {
     local cycles=${1:-10}
     if ! modinfo test_power >/dev/null 2>&1; then
         skip "test_power module not shipped by this kernel (Fedora sets CONFIG_TEST_POWER off); run C-4 on the laptop"
-        return 77
     fi
     if [ "$(has_status battery)" = 0 ]; then
         skip "a real battery is present (VMware 'Report battery information to guest'?); turn it off for this test"
-        return 77
     fi
     hotplug_cycle battery 'modprobe test_power' 'modprobe -r test_power' "$cycles"
 }
@@ -293,7 +294,6 @@ test_mcelog() {
     local result active
     if ! systemctl cat mcelog.service >/dev/null 2>&1; then
         skip "mcelog.service not in this image"
-        return 77
     fi
     result=$(systemctl show -P Result mcelog.service)
     active=$(systemctl show -P ActiveState mcelog.service)
@@ -307,22 +307,35 @@ test_mcelog() {
         pass "mcelog skipped by ExecCondition, not failed"
     elif [ "$active" = "inactive" ] && [ "$result" = "success" ]; then
         skip "mcelog was never started this boot (not enabled?)"
-        return 77
     else
         fail "mcelog: Result=$result ActiveState=$active"
     fi
 }
 
-SKIPPED=0
 
-# run_test <function> [args]: runs one test, counting a 77 return as a skip.
+# run_test <function> [args]: runs one test in a subshell with set -e in force.
+# Calling a function as `f || status=$?` would switch errexit off inside it, so a failing
+# command (e.g. systemctl restart) would go unnoticed. Here errexit is turned off only in
+# this parent, around a plain subshell, so it stays on inside the test: an unexpected
+# failure aborts that test, the ERR trap says where, and it is counted as a failure.
 run_test() {
-    local status=0
-    "$@" || status=$?
+    local status test_name=$1
+    # The subshell's non-zero exit is expected here, so neither errexit nor the
+    # top-level ERR trap should react to it in this parent.
+    set +e
+    trap - ERR
+    (
+        set -Eeuo pipefail
+        trap 'echo "ERROR: ${test_name}: ${FUNCNAME[0]:-?} line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
+        "$@"
+    )
+    status=$?
+    trap 'echo "ERROR: ${FUNCNAME[0]:-main} line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
+    set -e
     if [ "$status" = 77 ]; then
         SKIPPED=$((SKIPPED + 1))
     elif [ "$status" != 0 ]; then
-        fail "$1 stopped with status $status"
+        fail "$1 aborted with status $status (see ERROR above)"
     fi
 }
 
@@ -353,8 +366,10 @@ main() {
             ;;
         *) echo "unknown test: $test" >&2; exit 1 ;;
     esac
-    if [ "$FAILURES" -gt 0 ]; then
-        echo "$FAILURES failure(s), $SKIPPED skipped"
+    local failures
+    failures=$(wc -l <"$RESULTS")
+    if [ "$failures" -gt 0 ]; then
+        echo "$failures failure(s), $SKIPPED skipped"
         exit 1
     fi
     if [ "$SKIPPED" -gt 0 ] && [ "$test" != all ]; then
