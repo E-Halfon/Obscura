@@ -16,8 +16,8 @@ installers = [".msi"]        # .msix and Store packages go to pack-windows-vm (Â
 extensions = [".bat"]
 
 [requires]
-# Neither is declared by capd until task 0.2b; until then readiness says
-# "this version of Obscura can't detect it yet".
+# Both are declared since task 0.2b, neither is attachable: without them readiness is
+# Insufficient hardware. vulkan-1.3 means hardware Vulkan; lavapipe doesn't count.
 capabilities = ["x86-64-v3", "vulkan-1.3"]
 
 [fallback]

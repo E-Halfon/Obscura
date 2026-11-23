@@ -361,18 +361,22 @@ accept drift. Shipping beats purity.
 
 **0.2b notes.** The two capabilities need different mechanisms.
 
-- **`x86-64-v3` is a fixed CPU fact.** Try pure systemd conditions first: one
-  `ConditionCPUFeature=` line per v3 feature (avx, avx2, bmi1, bmi2, f16c, fma,
-  lzcnt/abm, movbe, xsave/osxsave). systemd ANDs repeated conditions together, so no
-  oneshot service is needed.
-  - **Check first:** which flag names `ConditionCPUFeature=` accepts (e.g. whether LZCNT
-    is `abm`), whether every v3 feature is in its table, and that Aurora's systemd
-    supports it.
-  - **Starting the target.** A condition only gates a start, so something still has to
-    start the target. The proposal is a static `multi-user.target.wants/` symlink for
-    **static** targets only. The target file itself still has no `[Install]`.
-    `tests/unit/test_repo_consistency.py` gains a rule that only static targets may be
-    wanted this way.
+- **`x86-64-v3` is a fixed CPU fact.** Pure systemd conditions: one
+  `ConditionCPUFeature=` line per psABI v2 and v3 feature. systemd ANDs repeated
+  conditions together, so no oneshot service is needed.
+  - **Checked:** Aurora stable is Fedora 45 with systemd 262.2. Its CPUID table
+    (`src/basic/virt.c`) has every name used: v2 `cx16 lahf_lm popcnt pni sse4_1 sse4_2
+    ssse3`, v3 `avx avx2 bmi1 bmi2 f16c fma3 abm movbe xsave osxsave`. **FMA is `fma3`**
+    and LZCNT is `abm`. A misspelled name fails silently (the capability would read absent
+    everywhere), so capd-tests evaluates every line with `systemd-analyze condition` on
+    the runner's x86-64-v3 CPU and requires all true.
+  - **Starting the target.** A condition only gates a start, so `sysinit.target` wants
+    each **static** target through a drop-in
+    (`sysinit.target.d/50-obscura-static-capabilities.conf`), not a `.wants/` symlink: the
+    repo can't carry symlinks on Windows checkouts (`core.symlinks=false`). The target has
+    no `[Install]`, is explicitly `Before=sysinit.target` (with `DefaultDependencies=no`),
+    and `obscura-capd` is `After=` it, so capd never reads it before its start job ran.
+    Lints keep the drop-in to static targets only and check both orderings.
   - A failed condition leaves the target inactive (absent, nothing failed).
 - **`vulkan-1.3` depends on the graphics driver**, so it can't be a systemd condition. It
   needs a probe after the GPU's DRM render node appears.
@@ -387,23 +391,24 @@ accept drift. Shipping beats purity.
     still satisfies dependents, and an `ExecStart` failure shows in `systemctl
     --failed`); re-probe on GPU add and remove; no Vulkan initialisation inside a udev
     worker.
-  - **Kind and attachable:** pick the kind that fits the mechanism (it may end up as
-    `probe` or `device`). Readiness no longer depends on the kind: both declarations set
-    `attachable = false`, so an absence is "Insufficient hardware", never "connect a
-    device".
-- **Capability names with dots.** `vulkan-1.3` (like any `x.y` version name) can't be
-  declared yet. capd's `NAME_PATTERN` allows only `[a-z0-9-]`, and its object-path
-  mapping (hyphen → underscore) has no encoding for `.`. 0.2b widens the pattern and
-  picks a one-to-one escaping for object paths (e.g. systemd-style `_2e` for `.` and
-  `_2d` for `-`; the current "hyphen → underscore" mapping can't take a second
-  character). Pack manifests already accept dotted names (task 0.21).
-- **Tests:**
-  - CI: the acceptance rule against recorded `vulkaninfo --json` fixtures (lavapipe
-    only; lavapipe + RADV; VMware SVGA; discrete + integrated), and a lint that every v3
-    feature condition is present.
-  - VM: `vulkan-1.3` is **absent** although lavapipe reports 1.3 (the key negative
-    test), and `x86-64-v3` is present exactly when `/proc/cpuinfo` has the v3 flags.
-  - Desktop: both present.
+  - **Kind and attachable:** `device` (it follows GPU hotplug). Readiness no longer
+    depends on the kind: both declarations set `attachable = false`, so an absence is
+    "Insufficient hardware", never "connect a device".
+  - **Implemented as:** udev starts `obscura-cap-vulkan-1.3-probe@<renderDN>.service` per
+    render node. The probe (`obscura_capd.vulkan_probe`) runs as `ExecCondition=`; the unit
+    is `BindsTo=` the node's device and `Upholds=` the target only while active. A node
+    counts only if a device in `vulkaninfo --json` has `VkPhysicalDeviceDrmPropertiesEXT`
+    for that node (no struct, no count; no fallback), is an integrated or discrete GPU, has
+    its own `apiVersion ≥ 1.3`, and isn't llvmpipe/lavapipe. The probe fails closed:
+    missing vulkaninfo, a crash or signal, a non-zero exit, a timeout (10 s per call, 45 s
+    overall) or bad JSON means absent, with the reason logged. It runs with capd's
+    hardening plus `DynamicUser=`, the render group, `DevicePolicy=closed` and
+    `DeviceAllow=char-drm`. vulkan-tools is added to the recipe (Aurora ships only
+    mesa-vulkan-drivers).
+- **Capability names with dots.** capd's `NAME_PATTERN` now accepts dots (the same rule
+  as pack manifests), and object paths escape every byte outside `[a-z0-9]` as `_xx`,
+  systemd-style: `vulkan-1.3` → `vulkan_2d1_2e3`, `x86-64-v3` → `x86_2d64_2dv3`.
+- **Tests:** §7, "Stage 0 — static capabilities (task 0.2b)".
 
 **0.22 note: readiness runs in the user's session.** Readiness is per user, because the
 user-supplied files are in `~`. The evaluation therefore runs in the user's session, as a
@@ -549,6 +554,37 @@ run in CI (`capd-tests`).
 | P-7 | Malformed manifest | Skipped with one reported problem; no traceback, no failed units |
 
 P-1…P-7 cover the user-files half of T-70. Its Neo half stays open until 0.28.
+
+### Stage 0 — static capabilities (task 0.2b)
+
+CI (`capd-tests`): the acceptance rule against `tests/fixtures/vulkan/` (synthetic
+scenarios for each branch; real recordings only for acceptance), the probe's fail-closed
+cases, `systemd-analyze condition` for every x86-64-v3 line on the runner, and lints for
+the units. VM tests are in `tests/vm/capabilities.sh` (C-9 was already bus-policy, so these
+start at C-10).
+
+| ID | Test | Pass condition |
+|---|---|---|
+| C-10 | x86-64-v3 on the VM | Present exactly when `/proc/cpuinfo` has the v2+v3 flags; every condition line agrees with its flag; glibc's `ld.so` agrees; nothing failed |
+| C-11 | Boot ordering | capd starts only after the x86-64-v3 target's conditions ran |
+| **C-12** | **lavapipe doesn't count** | lavapipe reports Vulkan ≥ 1.3, yet `vulkan-1.3` is absent; each render-node probe is skipped (`exec-condition`) with a logged reason; no failed units. The same run records `real-vmware-lavapipe-*` with `capture.py`; the CI negative test reads only that recording and fails until it's committed |
+| C-13 | Can't be faked | Manual start of the target refused; rerunning a probe stays absent; a probe for a nonexistent node never runs |
+| C-14 | Unplug, no reboot (mechanism) | A stand-in of the probe and target, bound to the webcam, stops within 5 s of unplugging |
+| P-2 | pack-wine on the VM (after 0.2b) | Insufficient hardware, `vulkan-1.3` absent rather than unknown |
+| D-1 | Desktop: both present | `x86-64-v3` and `vulkan-1.3` present; pack-wine Ready |
+| D-2 | Desktop: recordings | `capture.py` recordings of the real GPUs committed as `real-*` |
+| **D-3** | **Desktop: unplug the last qualifying GPU** | Over ssh, remove each qualifying GPU (`echo 1 > /sys/bus/pci/devices/<BDF>/remove`): `vulkan-1.3` absent within 5 s, `Removed` emitted, nothing failed; `echo 1 > /sys/bus/pci/rescan` brings it back |
+
+**Open items** (they stay open after 0.2b is marked done):
+- **vulkan-1.3 present on real recordings** (RADV/ANV, discrete + integrated). Synthetic
+  fixtures don't count. Open until D-2 records them with `capture.py` (a Fedora live USB
+  works); until then `test_present_on_real_hardware` skips. If a real recording on
+  Aurora's vulkan-tools lacks `VkPhysicalDeviceDrmPropertiesEXT` for a GPU that should have
+  it, stop: the design depends on it and has no fallback.
+- **NVIDIA's proprietary driver** needs `/dev/nvidiactl` and `/dev/nvidia*`, which the
+  probe's `DeviceAllow=char-drm` blocks, so it reads absent (fails safe). NVK needs only
+  DRM. Decide when the desktop GPU is chosen: allow `char-nvidia*`, or require NVK.
+- D-1 to D-3 need the desktop (with T-50).
 
 ### Stage 0 — telephony
 
