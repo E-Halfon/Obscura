@@ -1,0 +1,13 @@
+# Core signature registry (ARCHITECTURE.md §17.1, §18.2).
+# Packs name signatures in [handles] magic; only the core defines the bytes, so a pack
+# can't register an arbitrary binfmt_misc handler. The dispatcher (task 0.24) turns these
+# into binfmt_misc entries and does any deeper inspection (e.g. telling a PE executable
+# from a plain DOS one by its PE header, which binfmt_misc can't reach).
+#
+# [signature.<name>]: summary, magic (lowercase hex bytes), offset (default 0),
+# mask (hex, same length as magic; optional).
+api = 1
+
+[signature.mz]
+summary = "DOS or Windows executable (MZ header)"
+magic   = "4d5a"
