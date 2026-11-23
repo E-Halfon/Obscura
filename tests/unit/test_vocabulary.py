@@ -82,6 +82,21 @@ class ParseDeclarationTest(ReportCapture):
         text = declaration_text(name='"x86-64-v3"', target='"obscura-cap-x86-64-v3.target"', kind='"static"')
         self.assertEqual(parse_declaration(text, "x.toml").name, "x86-64-v3")
 
+    def test_dotted_name(self):
+        text = declaration_text(name='"vulkan-1.3"', target='"obscura-cap-vulkan-1.3.target"')
+        self.assertEqual(parse_declaration(text, "vulkan-1.3.toml").name, "vulkan-1.3")
+
+    def test_bad_separators_rejected(self):
+        for name in ("a..b", ".a", "a.", "a-.b", "a.-b", "A.1", "a_1.3", "a 1"):
+            with self.subTest(name):
+                text = declaration_text(name='"' + name + '"', target='"obscura-cap-' + name + '.target"')
+                with self.assertRaises(DeclarationError):
+                    parse_declaration(text, name + ".toml")
+
+    def test_same_rule_as_pack_manifests(self):
+        from obscura_packs.constants import CAPABILITY_NAME_PATTERN
+        self.assertEqual(vocabulary.NAME_PATTERN.pattern, CAPABILITY_NAME_PATTERN.pattern)
+
 
 class LoadVocabularyTest(ReportCapture):
     def write(self, directory, filename, text):

@@ -42,9 +42,16 @@ def interpret_unit(load_state, active_state):
 
 
 def object_path_for(name):
-    """Object path for a capability. Names never contain underscores, so this is one-to-one."""
+    """Object path for a capability. Every byte outside [a-z0-9] becomes `_` plus two hex
+    digits, systemd-style: `vulkan-1.3` -> `vulkan_2d1_2e3`. Names never contain `_`, so
+    the mapping is one-to-one."""
     try:
-        return CAPABILITY_PATH_PREFIX + name.replace("-", "_")
+        escaped = "".join(
+            character if ("a" <= character <= "z" or "0" <= character <= "9")
+            else "".join("_%02x" % byte for byte in character.encode("utf-8"))
+            for character in name
+        )
+        return CAPABILITY_PATH_PREFIX + escaped
     except Exception as error:
         report.failure("state.object_path_for", error)
         raise
