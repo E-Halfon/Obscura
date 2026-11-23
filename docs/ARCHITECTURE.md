@@ -138,8 +138,7 @@ activates, and the UI surfaces it exposes. Nothing more.
 
 | Capability | Detection | Activates | Present on |
 |---|---|---|---|
-| `windows-apps` | `pack-wine` installed and ready | provided by `pack-wine` (Wine, its binfmt_misc `MZ` registration) | all |
-| `android-apps` | `pack-waydroid` installed and ready | provided by `pack-waydroid` (Waydroid, LXC) | all |
+| `virt` | udev: kvm misc device (`/dev/kvm`) appears | lets VM packs use KVM (e.g. `pack-windows-vm`) | all |
 | `apple-coprocessor` | link peer responds | mirror client, virtual cam/audio, allowlist | opt-in per build |
 | `telephony` | udev: modem on USB | ModemManager, voice audio bridge, dialer | opt-in per build |
 | `battery` | `/sys/class/power_supply` | power arbitration, sleep policy | laptop, pocket computer |
@@ -147,7 +146,8 @@ activates, and the UI surfaces it exposes. Nothing more.
 | `gps` | ModemManager or udev | location service (portal-gated) | opt-in |
 | `camera` | udev: UVC or CSI | camera portal, virtual cam source | most |
 
-`windows-apps` and `android-apps` come from packs, not the core (§17.4). The core supplies
+Platform availability (`windows-apps`, `android-apps`) is not a capability and is not in
+this table: it comes from packs, not the core (§17.4). The core supplies
 only the kernel-level support they sit on: binder/binderfs, KVM, and `binfmt_misc`. Their
 availability is pack readiness (§17.3), reported by the pack manager; the capability
 service reports hardware only. The capability vocabulary is PACKS.md §2.
