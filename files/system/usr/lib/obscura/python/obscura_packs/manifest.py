@@ -6,6 +6,7 @@ passed, and any unexpected exception makes the manifest invalid and is reported,
 half-checked Manifest.
 """
 
+import functools
 import os
 import posixpath
 import tomllib
@@ -243,13 +244,21 @@ def _validate_pack(table):
         raise
 
 
+def _check_registered(signatures, name):
+    """A magic name must be in the core signature registry."""
+    try:
+        if name not in signatures:
+            raise ManifestError("unknown signature '" + name + "' (not in the core signature registry)")
+    except ManifestError:
+        raise
+    except Exception as error:
+        report.failure("manifest._check_registered", error)
+        raise
+
+
 def _validate_handles(table, platform, signatures):
     try:
-        def registered(name):
-            if name not in signatures:
-                raise ManifestError("unknown signature '" + name + "' (not in the core signature registry)")
-
-        magic = _string_list(table, "magic", "handles", NAME_PATTERN, registered)
+        magic = _string_list(table, "magic", "handles", NAME_PATTERN, functools.partial(_check_registered, signatures))
         installers = _string_list(table, "installers", "handles", SUFFIX_PATTERN)
         extensions = _string_list(table, "extensions", "handles", SUFFIX_PATTERN)
         overlap = set(installers) & set(extensions)
