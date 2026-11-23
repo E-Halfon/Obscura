@@ -1,12 +1,16 @@
-"""Mirrors systemd target state into the presence table. Requires dasbus (Linux only).
+"""Mirrors systemd target state into the presence table. Requires PyGObject (Linux only).
 
 capd never detects hardware. For every declared capability it asks systemd to load the
 target (LoadUnit, so an inactive target is reported as absent rather than missing) and
 reads its state. It resyncs a target whenever a job on it finishes (udev starting it,
 StopWhenUnneeded stopping it) and resyncs everything after a daemon-reload.
+
+systemd is called through the bus's Gio connection with explicit signatures and signal
+subscriptions rather than an introspected proxy: it needs no introspection round trip
+and behaves the same against real systemd and the test mock.
 """
 
-from dasbus.typing import get_native
+from gi.repository import Gio, GLib
 
 from obscura_capd import report
 from obscura_capd.constants import (
@@ -18,35 +22,48 @@ from obscura_capd.constants import (
 from obscura_capd.state import interpret_unit
 
 _PROPERTIES_INTERFACE = "org.freedesktop.DBus.Properties"
+_CALL_TIMEOUT_MS = 10000
 
 
 class SystemdMirror:
-    def __init__(self, bus, vocabulary, table, on_transition):
+    def __init__(self, connection, vocabulary, table, on_transition):
+        """`connection` is a Gio.DBusConnection to the system bus (dasbus: bus.connection)."""
         try:
-            self._bus = bus
+            self._connection = connection
             self._vocabulary = vocabulary
             self._table = table
             self._on_transition = on_transition
             self._name_by_target = {declaration.target: name for name, declaration in vocabulary.items()}
-            self._manager = None
+            self._subscriptions = []
         except Exception as error:
             report.failure("SystemdMirror.__init__", error)
             raise
 
     def start(self):
-        """Connect to systemd, subscribe, then do the first full sync.
+        """Subscribe to systemd's signals, then do the first full sync.
 
-        Signals are connected before Subscribe and before the first read, so a change that
-        lands between reading and subscribing still triggers a resync.
+        Signals are subscribed before Subscribe and before the first read, so a change
+        that lands between reading and subscribing still triggers a resync.
         """
         try:
-            self._manager = self._bus.get_proxy(SYSTEMD_BUS_NAME, SYSTEMD_PATH, SYSTEMD_MANAGER_INTERFACE)
-            self._manager.JobRemoved.connect(self._on_job_removed)
-            self._manager.Reloading.connect(self._on_reloading)
-            self._manager.Subscribe()
+            for member, handler in (("JobRemoved", self._on_job_removed), ("Reloading", self._on_reloading)):
+                self._subscriptions.append(self._connection.signal_subscribe(
+                    SYSTEMD_BUS_NAME, SYSTEMD_MANAGER_INTERFACE, member, SYSTEMD_PATH,
+                    None, Gio.DBusSignalFlags.NONE, handler,
+                ))
+            self._call(SYSTEMD_PATH, SYSTEMD_MANAGER_INTERFACE, "Subscribe", None, None)
             self.resync_all()
         except Exception as error:
             report.failure("SystemdMirror.start", error)
+            raise
+
+    def stop(self):
+        try:
+            for subscription in self._subscriptions:
+                self._connection.signal_unsubscribe(subscription)
+            self._subscriptions = []
+        except Exception as error:
+            report.failure("SystemdMirror.stop", error)
             raise
 
     def resync_all(self):
@@ -80,13 +97,26 @@ class SystemdMirror:
             report.failure("SystemdMirror.resync", error)
             raise
 
+    def _call(self, path, interface, method, parameters, reply_type):
+        try:
+            reply = self._connection.call_sync(
+                SYSTEMD_BUS_NAME, path, interface, method, parameters,
+                GLib.VariantType.new(reply_type) if reply_type else None,
+                Gio.DBusCallFlags.NONE, _CALL_TIMEOUT_MS, None,
+            )
+            return reply.unpack() if reply is not None else None
+        except Exception as error:
+            report.failure("SystemdMirror._call(" + method + ")", error)
+            raise
+
     def _read_target(self, target):
         """Returns (LoadState, ActiveState, ActiveEnterTimestamp) from one GetAll call, so the
         three values are consistent with each other."""
         try:
-            path = self._manager.LoadUnit(target)
-            properties = self._bus.get_proxy(SYSTEMD_BUS_NAME, path, _PROPERTIES_INTERFACE)
-            values = get_native(properties.GetAll(SYSTEMD_UNIT_INTERFACE))
+            (path,) = self._call(SYSTEMD_PATH, SYSTEMD_MANAGER_INTERFACE, "LoadUnit",
+                                 GLib.Variant("(s)", (target,)), "(o)")
+            (values,) = self._call(path, _PROPERTIES_INTERFACE, "GetAll",
+                                   GLib.Variant("(s)", (SYSTEMD_UNIT_INTERFACE,)), "(a{sv})")
             return (
                 str(values.get("LoadState", "")),
                 str(values.get("ActiveState", "")),
@@ -105,18 +135,20 @@ class SystemdMirror:
             report.failure("SystemdMirror._apply", error)
             raise
 
-    def _on_job_removed(self, job_id, job_path, unit, result):
-        """Signal handler. Must never raise into the event loop."""
+    def _on_job_removed(self, connection, sender, path, interface, signal, parameters):
+        """JobRemoved(u id, o job, s unit, s result). Must never raise into the event loop."""
         try:
+            unit = parameters.unpack()[2]
             name = self._name_by_target.get(unit)
             if name is not None:
                 self.resync(name)
         except Exception as error:
             report.failure("SystemdMirror._on_job_removed", error)
 
-    def _on_reloading(self, active):
-        """Signal handler. Resync everything once a daemon-reload has finished."""
+    def _on_reloading(self, connection, sender, path, interface, signal, parameters):
+        """Reloading(b active). Resync everything once a daemon-reload has finished."""
         try:
+            (active,) = parameters.unpack()
             if not active:
                 self.resync_all()
         except Exception as error:
