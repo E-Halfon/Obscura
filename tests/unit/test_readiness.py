@@ -24,16 +24,18 @@ from obscura_packs.userfiles import ABSENT, OK, UNREADABLE, WRONG_DUMP, FileStat
 SHA = "b" * 64
 
 
-def declaration(name, kind, summary):
+def declaration(name, kind, summary, attachable):
     return Declaration(name=name, api=1, kind=kind, target="obscura-cap-" + name + ".target",
-                       summary=summary, source=name + ".toml")
+                       summary=summary, source=name + ".toml", attachable=attachable)
 
 
 VOCABULARY = {
-    "x86-64-v3": declaration("x86-64-v3", "static", "AVX2, BMI2, FMA"),
-    "camera": declaration("camera", "device", "A camera"),
-    "apple-coprocessor": declaration("apple-coprocessor", "probe", "An Apple coprocessor"),
-    "dgpu": declaration("dgpu", "device", "A discrete GPU"),
+    "x86-64-v3": declaration("x86-64-v3", "static", "AVX2, BMI2, FMA", False),
+    "camera": declaration("camera", "device", "A camera", True),
+    "apple-coprocessor": declaration("apple-coprocessor", "probe", "An Apple coprocessor", True),
+    # A device-kind capability that isn't attachable (PACKS.md §2: an iGPU-only laptop
+    # has insufficient hardware, it isn't told to connect a GPU).
+    "dgpu": declaration("dgpu", "device", "A discrete GPU", False),
 }
 
 
@@ -102,6 +104,11 @@ class ReadinessTest(unittest.TestCase):
                 result = evaluate(pack(requires=requires), frozenset(), VOCABULARY)
                 self.assertEqual(result.state, INSUFFICIENT_HARDWARE)
                 self.assertEqual(len(result.reasons), 2)
+
+    def test_attachable_decides_not_the_detection_kind(self):
+        result = evaluate(pack(requires=["dgpu"]), frozenset(), VOCABULARY)
+        self.assertEqual(result.state, INSUFFICIENT_HARDWARE)
+        self.assertEqual(result.reasons[0].fix, "")
 
     def test_only_attachable_absences_are_missing_hardware(self):
         result = evaluate(pack(requires=["camera", "apple-coprocessor"]), frozenset(), VOCABULARY)

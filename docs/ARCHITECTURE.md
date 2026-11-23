@@ -133,8 +133,9 @@ have Obscura handle only signaling and audio routing. See §8.
 
 The mechanism that makes one image work across three very different machines.
 
-**A capability is:** a declared feature, a hardware detection rule, the services it
-activates, and the UI surfaces it exposes. Nothing more.
+**A capability is:** a declared feature, a hardware detection rule, whether the user can
+fix its absence by connecting something (`attachable`, used by pack readiness §17.3), the
+services it activates, and the UI surfaces it exposes. Nothing more.
 
 | Capability | Detection | Activates | Present on |
 |---|---|---|---|
@@ -699,8 +700,10 @@ stays inside portable devices (small, ~1 W); the Switch belongs in a home coproc
   - factory packs live in `/usr/share/obscura/packs`; installed packs live in
     `/var/lib/obscura/packs` with an atomic `current` symlink and a `removed` marker
   - user files go in `~/Obscura/firmware/<files_dir>/`, shared per console (§17.1)
-- **Readiness (task 0.21):** an absent static capability gives *Insufficient hardware*;
-  an absent device or probe capability gives *Missing hardware*. Two states were added,
+- **Readiness (task 0.21):** an absent capability that isn't attachable gives
+  *Insufficient hardware*, which wins; *Missing hardware* only when every absent one is
+  attachable. `attachable` is a field of each capability declaration, not inferred from
+  its detection kind. Two states were added,
   *Needs another pack* and *Couldn't evaluate*, and an error never yields Ready (§17.3).
   Readiness is per user, so it's evaluated in the user's session, and the system pack
   daemon only installs (task 0.22)
@@ -1036,10 +1039,12 @@ Each device evaluates every installed pack against its own capabilities and repo
 once. The state is then picked in this order:
 1. **Hardware.** A required capability is absent, or the pack is marked "not on this
    device". If `fallback.remote` is set and a peer can run the pack, the state is
-   **Remote**. Otherwise it's **Insufficient hardware** if any absent capability is one
-   that can't be connected (a `static` capability, or one this Obscura can't detect),
-   because telling the user to connect something wouldn't fix it. Only when every absent
-   capability can be connected (`device` or `probe`) is it **Missing hardware**.
+   **Remote**. Otherwise it's **Insufficient hardware** if any absent capability isn't
+   attachable, or can't be detected by this Obscura, because telling the user to connect
+   something wouldn't fix it. Only when every absent capability is attachable is it
+   **Missing hardware**. Each capability declaration says `attachable = true/false`
+   (PACKS.md §2), independently of how it's detected (`kind`): a discrete GPU is detected
+   by udev but isn't attachable. "Not on this device" counts as not attachable.
 2. **Runtime.** The runtime pack isn't installed: **Needs another pack**. It's installed
    but not ready: the dependent pack takes the runtime's state.
 3. **Files.** A required user file is absent or matches no listed checksum: **Missing
@@ -1050,8 +1055,10 @@ An unexpected error anywhere in evaluation gives **Couldn't evaluate**, never Re
 the error is reported. Readiness is per user, because the files are in `~`.
 
 Installed packs sync across devices; each device judges its own readiness. A pack can be
-marked "not on this device" (e.g. no Windows VM on the pocket computer) so it shows as
-"runs remotely" instead of installing.
+marked "not on this device" (e.g. no Windows VM on the pocket computer). It then isn't
+run locally. If the pack allows remote use (`fallback.remote`) and a peer can run it,
+it shows as **Remote** ("runs on your desktop"). Otherwise it shows **Insufficient
+hardware** with "Set not to run on this device" and a button to allow it here.
 
 ### 17.4 Rules
 

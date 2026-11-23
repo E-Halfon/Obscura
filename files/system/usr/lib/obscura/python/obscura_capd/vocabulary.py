@@ -30,6 +30,10 @@ class Declaration:
     target: str
     summary: str
     source: str
+    # Whether the user can fix an absence by connecting something (a webcam, a modem, the
+    # Neo). Readiness uses it to choose Missing hardware over Insufficient hardware
+    # (ARCHITECTURE.md §17.3). It's independent of `kind`, which says how it's detected.
+    attachable: bool = False
 
 
 def target_for(name):
@@ -62,6 +66,12 @@ def parse_declaration(text, source):
             if not isinstance(value, kind) or isinstance(value, bool):
                 raise DeclarationError("field '" + key + "' must be " + kind.__name__)
             values[key] = value
+
+        if "attachable" not in table:
+            raise DeclarationError("missing field 'attachable'")
+        if not isinstance(table["attachable"], bool):
+            raise DeclarationError("field 'attachable' must be true or false")
+        values["attachable"] = table["attachable"]
 
         if not NAME_PATTERN.match(values["name"]):
             raise DeclarationError("invalid name '" + values["name"] + "'")

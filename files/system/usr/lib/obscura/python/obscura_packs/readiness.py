@@ -34,9 +34,6 @@ FIX_OPEN_FILES_FOLDER = "open-files-folder"
 FIX_COPY_DIAGNOSTICS = "copy-diagnostics"
 FIX_RUN_HERE = "allow-on-this-device"
 
-# Kinds whose absence means "something can be connected" rather than "this machine can't".
-_ATTACHABLE_KINDS = ("device", "probe")
-
 
 @dataclass(frozen=True)
 class Reason:
@@ -68,9 +65,10 @@ def _describe(name, vocabulary):
 
 def _hardware(manifest, present, vocabulary, not_on_this_device):
     """(reasons, fixable): reasons for every missing required capability, and whether
-    connecting something could fix all of them. One capability that can't be connected
-    (or can't be detected) makes the whole result Insufficient hardware: telling the user
-    to connect a device would not help."""
+    connecting something could fix all of them. Each capability's declaration says whether
+    it's attachable (independent of how it's detected). One absent capability that isn't
+    attachable, or can't be detected, makes the whole result Insufficient hardware:
+    telling the user to connect a device would not help."""
     try:
         reasons = []
         fixable = True
@@ -83,7 +81,7 @@ def _hardware(manifest, present, vocabulary, not_on_this_device):
                 reasons.append(Reason("capability-unknown", name,
                                       "Needs " + name + ", which this version of Obscura can't detect yet.",
                                       FIX_UPDATE_OBSCURA))
-            elif declaration.kind in _ATTACHABLE_KINDS:
+            elif declaration.attachable is True:
                 reasons.append(Reason("capability-absent", name,
                                       "Needs " + _describe(name, vocabulary) + ". None is connected or reachable.",
                                       FIX_CONNECT_DEVICE))

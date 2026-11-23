@@ -387,8 +387,10 @@ accept drift. Shipping beats purity.
     still satisfies dependents, and an `ExecStart` failure shows in `systemctl
     --failed`); re-probe on GPU add and remove; no Vulkan initialisation inside a udev
     worker.
-  - **Kind:** keep `static` if the mechanism allows, so readiness says "Insufficient
-    hardware".
+  - **Kind and attachable:** pick the kind that fits the mechanism (it may end up as
+    `probe` or `device`). Readiness no longer depends on the kind: both declarations set
+    `attachable = false`, so an absence is "Insufficient hardware", never "connect a
+    device".
 - **Capability names with dots.** `vulkan-1.3` (like any `x.y` version name) can't be
   declared yet. capd's `NAME_PATTERN` allows only `[a-z0-9-]`, and its object-path
   mapping (hyphen → underscore) has no encoding for `.`. 0.2b widens the pattern and

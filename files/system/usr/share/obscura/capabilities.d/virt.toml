@@ -8,3 +8,4 @@ api     = 1
 kind    = "device"
 target  = "obscura-cap-virt.target"
 summary = "Hardware virtualization (AMD-V / VT-x) usable by KVM"
+attachable = false   # enabled in firmware, not connected
