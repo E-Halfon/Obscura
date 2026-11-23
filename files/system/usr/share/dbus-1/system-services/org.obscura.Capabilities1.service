@@ -1,0 +1,5 @@
+[D-BUS Service]
+Name=org.obscura.Capabilities1
+Exec=/bin/false
+User=obscura-capd
+SystemdService=obscura-capd.service

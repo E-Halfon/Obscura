@@ -14,3 +14,7 @@ keys/
 roms/
 *.img
 *.qcow2
+
+# Python bytecode
+__pycache__/
+*.pyc

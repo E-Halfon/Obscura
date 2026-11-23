@@ -1,0 +1,6 @@
+#!/bin/sh
+# Camera Obscura capability query tool, for development and tests.
+# Never required of users (ARCHITECTURE.md §19). See obscura_capd/cli.py.
+PYTHONPATH=/usr/lib/obscura/python
+export PYTHONPATH
+exec /usr/bin/python3 -P -m obscura_capd.cli "$@"

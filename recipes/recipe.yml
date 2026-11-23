@@ -14,6 +14,15 @@ image-version: stable
 # module configuration, executed in order
 # you can include multiple instances of the same module
 modules:
+  # obscura-capd (ARCHITECTURE.md §4) is Python on dasbus; python3-systemd gives it
+  # structured journal entries.
+  - type: dnf
+    install:
+      packages:
+        - python3-dasbus
+        - python3-gobject-base
+        - python3-systemd
+
   - type: files
     files:
       - source: system
