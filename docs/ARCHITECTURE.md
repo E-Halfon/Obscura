@@ -1060,6 +1060,10 @@ marked "not on this device" (e.g. no Windows VM on the pocket computer) so it sh
   outlive any individual emulator.
 - **Packs depend on core services, not on each other** — except one level deep on runtime
   packs (`pack-wine`, `pack-proton`).
+  **Only factory packs (shipped in the image) may declare `runtime = true`** for now, so an
+  installed pack can't make itself a dependency target. An installed runtime pack is
+  rejected and the factory copy is used. Signed repository packs become eligible in
+  task 0.23.
 - **Packs are signed, run in userspace wherever possible, and declare what they touch.**
   A pack needing a kernel module requires explicit approval.
 - **Packs never bundle copyrighted firmware, keys, or OS images** (§14.2).

@@ -95,11 +95,36 @@ class CatalogTest(unittest.TestCase):
 
     @unittest.skipUnless(SYMLINKS, "symlinks unavailable")
     def test_installed_current_wins_over_factory(self):
-        self.put(self.factory, "pack-wine", manifest_text("pack-wine", "1.0", runtime=True))
-        self.install("pack-wine", "2.0", manifest_text("pack-wine", "2.0", runtime=True))
-        pack = self.load().get("pack-wine")
+        self.put(self.factory, "pack-dosbox", manifest_text("pack-dosbox", "1.0"))
+        self.install("pack-dosbox", "2.0", manifest_text("pack-dosbox", "2.0"))
+        pack = self.load().get("pack-dosbox")
         self.assertEqual(pack.origin, INSTALLED)
         self.assertEqual(pack.manifest.version, "2.0")
+
+    @unittest.skipUnless(SYMLINKS, "symlinks unavailable")
+    def test_installed_runtime_pack_falls_back_to_factory(self):
+        # Only factory packs may be runtimes until signed repository packs (task 0.23).
+        self.put(self.factory, "pack-wine", manifest_text("pack-wine", "1.0", runtime=True))
+        self.install("pack-wine", "2.0", manifest_text("pack-wine", "2.0", runtime=True))
+        catalog = self.load()
+        self.assertEqual(catalog.get("pack-wine").origin, FACTORY)
+        self.assertEqual(catalog.get("pack-wine").manifest.version, "1.0")
+        self.assertIn("only packs shipped in the image", self.problems(catalog)[0])
+
+    @unittest.skipUnless(SYMLINKS, "symlinks unavailable")
+    def test_installed_pack_cannot_become_a_runtime(self):
+        self.install("pack-evil", "1.0", manifest_text("pack-evil", "1.0", runtime=True))
+        self.put(self.factory, "pack-victim", manifest_text("pack-victim", depends=["pack-evil"]))
+        catalog = self.load()
+        self.assertIsNone(catalog.get("pack-evil"))
+        # The dependent stays, and readiness will say the runtime isn't installed.
+        self.assertIsNotNone(catalog.get("pack-victim"))
+
+    def test_extra_root_runtime_pack_is_rejected(self):
+        self.put(self.extra, "pack-proton", manifest_text("pack-proton", runtime=True))
+        catalog = self.load(extra_roots=[self.extra])
+        self.assertIsNone(catalog.get("pack-proton"))
+        self.assertIn("only packs shipped in the image", self.problems(catalog)[0])
 
     @unittest.skipUnless(SYMLINKS, "symlinks unavailable")
     def test_installed_only_pack(self):
@@ -154,7 +179,7 @@ class CatalogTest(unittest.TestCase):
 
     def test_extra_roots_add_but_never_replace(self):
         self.put(self.factory, "pack-wine", manifest_text("pack-wine", runtime=True))
-        self.put(self.extra, "pack-wine", manifest_text("pack-wine", "6.6", runtime=True))
+        self.put(self.extra, "pack-wine", manifest_text("pack-wine", "6.6"))
         self.put(self.extra, "pack-fixture", manifest_text("pack-fixture"))
         catalog = self.load(extra_roots=[self.extra])
         self.assertEqual(catalog.get("pack-wine").origin, FACTORY)

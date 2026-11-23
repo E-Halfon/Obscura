@@ -349,7 +349,7 @@ accept drift. Shipping beats purity.
 | **Foundation track** | | | |
 | 0.21 | **Pack format v1:** manifest schema, `api` version, readiness evaluation | 0.2 | 4 |
 | 0.22 | **Pack manager daemon (DBus) + CLI:** install, update, remove, pin, rollback | 0.21 | 5 |
-| 0.23 | System bundles + signed repository (index on GitHub Releases) | 0.22 | 2 |
+| 0.23 | System bundles + signed repository (index on GitHub Releases). Signed repository packs become eligible to declare `runtime = true` (until then only factory packs may, §17.4) | 0.22 | 2 |
 | 0.24 | **Dispatcher:** precedence rules, compatibility database v0, overrides keyed on product + publisher | 0.21, 0.4 | 4 |
 | 0.25 | **Typed action API v1 (DBus):** schemas, tiers, undo, logging; first actions for audio, display, power | 0.2 | 5 |
 | 0.26 | Pack manager GUI + right-click "Run with" | 0.22, 0.24, 0.3 | 4 |

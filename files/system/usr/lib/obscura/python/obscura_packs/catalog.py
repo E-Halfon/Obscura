@@ -8,7 +8,8 @@ ARCHITECTURE.md §17.1:
   <installed>/<name>/removed                     hides the pack, factory copy included
 
 An installed `current` wins over the factory copy. A broken `current` falls back to the
-factory copy and is reported. Every bad manifest is reported and skipped; it never stops
+factory copy and is reported. Only factory packs may be runtime packs (`runtime = true`)
+until signed repository packs (task 0.23); an installed one falls back to the factory copy. Every bad manifest is reported and skipped; it never stops
 the others from loading.
 """
 
@@ -135,6 +136,19 @@ def _load_installed(base, name, signatures, catalog):
         raise
 
 
+def _not_eligible_as_runtime(pack, catalog):
+    """Only factory packs (shipped in the image) may declare runtime = true for now; signed
+    repository packs become eligible with task 0.23 (ARCHITECTURE.md §17.4). Otherwise any
+    installed pack could make itself a dependency target. Reports and returns None."""
+    try:
+        _note(catalog, pack.path, pack.manifest.name + " declares runtime = true, but only packs shipped in the"
+              " image may be runtime packs (signed repository packs: task 0.23)")
+        return None
+    except Exception as error:
+        report.failure("catalog._not_eligible_as_runtime", error)
+        raise
+
+
 def _check_dependencies(catalog):
     """Cross-pack rules (ARCHITECTURE.md §17.4): a pack may depend only on runtime packs.
     A dependency that isn't installed is fine here; readiness reports it. A pack that
@@ -166,6 +180,8 @@ def load_catalog(signatures, factory_root=FACTORY_ROOT, installed_root=INSTALLED
             if os.path.lexists(os.path.join(base, REMOVED_MARKER)):
                 continue
             installed = _load_installed(base, name, signatures, catalog)
+            if installed is not None and installed.manifest.runtime:
+                installed = _not_eligible_as_runtime(installed, catalog)
             chosen = installed or factory.get(name)
             if chosen is None:
                 continue
@@ -175,6 +191,9 @@ def load_catalog(signatures, factory_root=FACTORY_ROOT, installed_root=INSTALLED
 
         for root in extra_roots:
             for name, pack in _load_tree(root, signatures, EXTRA, catalog).items():
+                if pack.manifest.runtime:
+                    _not_eligible_as_runtime(pack, catalog)
+                    continue
                 if name in catalog.packs:
                     _note(catalog, pack.path, "duplicate pack " + name + " (already loaded from " + catalog.packs[name].path + ")")
                     continue
