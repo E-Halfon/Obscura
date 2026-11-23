@@ -267,6 +267,14 @@ class ReadinessTest(unittest.TestCase):
         self.assertEqual(results["pack-a-steamvr"].state, MISSING_HARDWARE)
         self.assertEqual(results["pack-a-steamvr"].reasons[0].code, "runtime-not-ready")
 
+    def test_catalog_remote_is_per_pack(self):
+        catalog = self.catalog(pack("pack-a", requires=["apple-coprocessor"], remote=True),
+                               pack("pack-b", requires=["apple-coprocessor"], remote=True))
+        results = evaluate_catalog(catalog, frozenset(), VOCABULARY, "/home/u", remote_packs={"pack-a"},
+                                   check_files=lambda m, h, c: {})
+        self.assertEqual(results["pack-a"].state, REMOTE)
+        self.assertEqual(results["pack-b"].state, MISSING_HARDWARE)
+
     def test_catalog_one_failing_pack_does_not_block_the_others(self):
         catalog = self.catalog(pack("pack-a"), pack("pack-b"))
 

@@ -264,10 +264,14 @@ def evaluate(manifest, present, vocabulary, runtime_states=None, file_status=Non
 
 
 def evaluate_catalog(catalog, present, vocabulary, home, cache=None, not_on_this_device=(),
-                     remote_ready=False, check_files=None):
+                     remote_packs=frozenset(), check_files=None):
     """{name: Readiness} for every pack in the catalog. Runtime packs first, so dependents
     can use their state. Each pack fails closed on its own; one bad pack never blocks the
-    others."""
+    others.
+
+    remote_packs: names of the packs a peer device can run right now. Per pack, because a
+    peer may run one pack and not another. Always empty until peers exist
+    (pack-remote-compute, task 0.28)."""
     try:
         check_files = check_files or userfiles.check_user_files
         results = {}
@@ -283,7 +287,7 @@ def evaluate_catalog(catalog, present, vocabulary, home, cache=None, not_on_this
                 continue
             runtimes = {name: results[name] for name in manifest.depends if name in results}
             results[manifest.name] = evaluate(manifest, present, vocabulary, runtimes, file_status,
-                                              manifest.name in not_on_this_device, remote_ready)
+                                              manifest.name in not_on_this_device, manifest.name in remote_packs)
         return results
     except Exception as error:
         report.failure("readiness.evaluate_catalog", error)
