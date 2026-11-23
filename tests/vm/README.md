@@ -1,4 +1,4 @@
-# VM tests: capability framework (task 0.2)
+# VM tests: capability framework (tasks 0.2 and 0.2b)
 
 `capabilities.sh` checks the real udev → systemd → DBus path on the built image. The
 unit and DBus integration tests (`tests/unit`, `tests/integration`) run in CI; these
@@ -28,11 +28,28 @@ need the image booted in a VM.
 | C-9 | `sudo ./capabilities.sh bus-policy` | Any. Runs as `nobody`: List, Has, GetManagedObjects and Properties.GetAll succeed; Properties.Set is refused with AccessDenied. The CI bus is permissive, so this is the only check of the policy file | Ready |
 | C-8 | `sudo ./capabilities.sh mcelog` | Any; also run on the Ryzen desktop (§12 item 14) | Ready |
 
-`sudo ./capabilities.sh all` runs C-1 and C-5 to C-9 in one go. Exit codes: 0 pass,
-1 fail, 77 skipped.
+`sudo ./capabilities.sh all` runs C-1, C-5 to C-13 (not the interactive ones) in one go.
+Exit codes: 0 pass, 1 fail, 77 skipped.
 
 With a webcam connected, check presence with `state --present camera`. With several
-capabilities present: `state --present battery,camera`.
+capabilities present: `state --present battery,camera`. Static capabilities
+(`x86-64-v3`) aren't part of `state`'s baseline, because the tester can't change them;
+C-10 checks them.
+
+## Static capabilities (task 0.2b)
+
+Build brief §7, "Stage 0 — static capabilities". **Run C-11 first after a fresh boot.**
+For C-12, turn on *Display → Accelerate 3D graphics*, so the VM has a DRM render node
+(vmwgfx) and the probe actually runs.
+
+| ID | Command | Setup | Status |
+|---|---|---|---|
+| C-10 | `sudo ./capabilities.sh x86-64-v3` | Any. Each `ConditionCPUFeature=` line must agree with `/proc/cpuinfo` (FMA is `fma3` to systemd, `fma` to the kernel; `osxsave` is hidden by the kernel), glibc's `ld.so --help` must agree, and the capability must match | Ready |
+| C-10b | `sudo ./capabilities.sh x86-64-v3` | Optional negative: power off, add `cpuid.7.ebx = "----:----:----:----:----:----:--0-:----"` to the .vmx (masks AVX2), boot. Expect absent, nothing failed. Remove the line afterwards | Optional |
+| C-11 | `sudo ./capabilities.sh boot-order` | Fresh boot. sysinit.target and obscura-capd are ordered after the x86-64-v3 target, and capd started after its conditions ran | Ready |
+| **C-12** | `sudo ./capabilities.sh vulkan-lavapipe` | 3D acceleration on. Skips unless `vulkaninfo --summary` shows llvmpipe at Vulkan ≥ 1.3. Then: vulkan-1.3 absent, the target inactive, every `obscura-cap-vulkan-1.3-probe@renderD*` inactive with Result `exec-condition`, a journal reason per node, no failed units. **Then record the fixture** (as your normal user, outside the repo): `python3 tests/fixtures/vulkan/capture.py ~/vulkan-capture --label vmware-lavapipe`, and commit the `real-vmware-lavapipe-*` files with README rows marked real | Ready |
+| C-13 | `sudo ./capabilities.sh vulkan-no-fake` | Manual start of the target is refused; rerunning a probe leaves it absent; a probe for a nonexistent node never runs | Ready |
+| C-14 | `sudo ./capabilities.sh unplug` | Webcam passthrough, as C-3. Builds a stand-in from the installed probe and target (only the device, target name and detection command swapped) bound to the webcam's video node, then checks that disconnecting it stops the target within 5 s without a reboot. The VM can't have a qualifying GPU, so the real unplug is D-3 on the desktop | Ready (interactive) |
 
 The camera alternative to USB passthrough is the `vivid` virtual driver. Fedora builds it
 (`CONFIG_VIDEO_VIVID=m`), but it may live in a modules package Aurora doesn't install:

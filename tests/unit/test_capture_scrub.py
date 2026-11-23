@@ -171,7 +171,7 @@ class CaptureFlowTest(unittest.TestCase):
                         "renderD128": {"dev": "226:128", "pci": "0000:03:00.0", "driver": "amdgpu"}}):
                 written = capture.capture(out_dir, "test-box")
             self.assertEqual(written, ["real-test-box-gpu0-radv-1.3.json", "real-test-box-gpu1-llvmpipe-1.3.json",
-                                       "nodes.json", "capture-info.json"])
+                                       "real-test-box-nodes.json", "capture-info.json"])
             for name in written:
                 with self.subTest(name):
                     with open(os.path.join(out_dir, name), "r", encoding="utf-8") as handle:

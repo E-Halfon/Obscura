@@ -22,9 +22,13 @@ On the machine to record (a Fedora live USB works):
     python3 capture.py ~/vulkan-capture --label <machine>-<driver>
 
 The script removes every key containing `UUID` or `LUID` (and `deviceNodeMask`) and refuses
-to write inside a git checkout. Review the output, copy the `real-*.json` files here, and
-add a row for each. Put the `nodes.json` render-node map in the Notes column (or alongside,
-as `real-<label>-nodes.json`).
+to write inside a git checkout. Review the output, copy the `real-*.json` files here
+(device files and `real-<label>-nodes.json`), and add a row for each, with Origin `real`
+and the Source from `capture-info.json` (machine class, Mesa and vulkaninfo versions,
+date). Don't copy `capture-info.json` itself.
+
+The VMware recording (`--label vmware-lavapipe`, VM test C-12) is the only input to the
+lavapipe negative test, so that test fails until it's committed.
 
 ## Scenarios
 Files group into scenarios by label: `<origin>-<label>-gpu<n>-<driver>-<api>.json` (one per

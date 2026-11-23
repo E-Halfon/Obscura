@@ -8,13 +8,14 @@ Run it on real hardware, for example from a Fedora live USB:
 
 It writes, into <out-dir> (which must not be inside a git checkout):
   real-<label>-gpu<n>-<driver>-<api>.json   one per Vulkan device, scrubbed
-  nodes.json                                 render node -> major:minor, PCI address, driver
+  real-<label>-nodes.json                    render node -> major:minor, PCI address, driver
   capture-info.json                          versions, kernel, date, the keys that were scrubbed
 
 Scrubbing: every key whose name contains "UUID" or "LUID" (any case, any depth) is removed,
 plus deviceNodeMask, before anything is written. The result is then re-scanned, and nothing
-is written if any such key survived. Review the files, then copy them into
-tests/fixtures/vulkan/ and add a row for each to README.md (marked real).
+is written if any such key survived. Review the files, copy the real-* ones into
+tests/fixtures/vulkan/, and add a row for each to README.md (marked real). capture-info.json
+is for the README's Source column; don't copy it.
 
 Standard library only, so it runs on a live USB without the Obscura tree. Exit codes:
 0 written, 1 failed (nothing written), 2 vulkaninfo missing or bad usage.
@@ -380,10 +381,11 @@ def capture(out_dir, label):
         clean_info, _ = scrub_document(info)
         clean_nodes, _ = scrub_document(nodes)
 
+        nodes_name = "real-" + safe_part(label) + "-nodes.json"
         os.makedirs(out_dir, exist_ok=True)
         for name, document in outputs.items():
             write_json(os.path.join(out_dir, name), document)
-        write_json(os.path.join(out_dir, "nodes.json"), clean_nodes)
+        write_json(os.path.join(out_dir, nodes_name), clean_nodes)
         write_json(os.path.join(out_dir, "capture-info.json"), clean_info)
 
         for index, device, kind, api, driver in summaries:
@@ -391,7 +393,7 @@ def capture(out_dir, label):
         print("render nodes: " + (", ".join(name + "=" + str(entry["dev"]) + " " + str(entry["driver"])
                                             for name, entry in clean_nodes.items()) or "none"))
         print("scrubbed keys: " + (", ".join(sorted(removed_keys)) or "none"))
-        return sorted(outputs) + ["nodes.json", "capture-info.json"]
+        return sorted(outputs) + [nodes_name, "capture-info.json"]
     except CaptureError:
         raise
     except Exception as error:
@@ -419,7 +421,8 @@ def main(argv=None):
         print("wrote to " + os.path.abspath(arguments.out_dir) + ":")
         for name in written:
             print("  " + name)
-        print("Review them, copy them to tests/fixtures/vulkan/, and add a README row for each (real).")
+        print("Review them, copy the real-* files to tests/fixtures/vulkan/, and add a README row for each "
+              "(Origin: real; Source from capture-info.json).")
         return 0
     except SystemExit:
         raise
