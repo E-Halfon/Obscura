@@ -37,3 +37,4 @@ CapabilityBoundingSet=
 SystemCallFilter=@system-service
 SystemCallErrorNumber=EPERM
 ProtectProc=invisible
+UMask=0077
