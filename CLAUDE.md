@@ -33,7 +33,11 @@ rejected options.
   Move them to src/ once a build proves a Containerfile COPY from the repo root works.
 - tests/: unit and DBus integration tests (CI: capd-tests workflow); tests/vm/ runs on
   the built image in a VM
-- packs/: pack manifests and pack code (scaffold new ones with /new-pack)
+- files/system/usr/share/obscura/packs/<name>/pack.toml: manifests of packs shipped in the
+  image (factory packs, ARCHITECTURE.md §17.1). They're here for the same BlueBuild reason
+  as the Python services; move them to packs/ along with those. Scaffold new ones with
+  /new-pack.
+- packs/: pack code that doesn't ship in the image (empty for now)
 - src/: pack manager, dispatcher, action API, Settings modules
 - docs/: the three design documents
 

@@ -36,6 +36,11 @@ Every pack declares:
 | **User supplies** | Files the user must provide. **Packs never bundle firmware, BIOS, ROMs, or keys** |
 | **Status** | Mature, Usable, Experimental, or Planned |
 
+These are the catalog's columns. The full manifest format (`pack.toml`, `api = 1`) is in
+ARCHITECTURE.md §17.1. User-supplied files go in `~/Obscura/firmware/<files_dir>/`. Packs
+for the same console share `files_dir`, named after the console (`ps1`, `ps2`, …), so a
+BIOS is placed once.
+
 ### 1.2 Device columns
 
 | Symbol | Meaning |

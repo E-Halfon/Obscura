@@ -327,6 +327,7 @@ accept drift. Shipping beats purity.
 |---|---|---|---|
 | 0.1 | **Universal-image skeleton:** BlueBuild recipe on Universal Blue Aurora (`stable`), signed image builds, boots on the desktop | — | 3 |
 | 0.2 | **Capability module framework** (udev → systemd → DBus) — ✅ **done** (PR #2, 2026-11-22; open VM tests tracked in §7, "Stage 0 — capability framework") | 0.1 | 3 |
+| 0.2b | **Static capabilities:** `x86-64-v3` and `vulkan-1.3` (notes below the table). Needed for `pack-wine` to reach Ready | 0.2 | 2 |
 | 0.3 | **KDE Plasma shell:** strip, theme, Windows-style layout | 0.1 | 2 |
 | 0.4 | Wine + binfmt_misc dispatch, `.exe` → window — **delivered as `pack-wine`** | 0.3, 0.21 | 3 |
 | 0.5 | Wine sandbox: bubblewrap, no-network default | 0.4 | 2 |
@@ -357,6 +358,49 @@ accept drift. Shipping beats purity.
 | 0.29 | **`pack-windows-vm`:** KVM/libvirt/OVMF/swtpm, RemoteApp per-window mirroring, firewalled as an untrusted coprocessor | 0.28, 0.9 | 6 |
 | 0.30 | VM GPU acceleration: passthrough vs SR-IOV; SolidWorks as the acceptance app | 0.29 | 3 |
 | 0.31 | Telephony delivered as `pack-telephony`, publishing call and SMS events | 0.19, 0.21 | 1 |
+
+**0.2b notes.** The two capabilities need different mechanisms.
+
+- **`x86-64-v3` is a fixed CPU fact.** Try pure systemd conditions first: one
+  `ConditionCPUFeature=` line per v3 feature (avx, avx2, bmi1, bmi2, f16c, fma,
+  lzcnt/abm, movbe, xsave/osxsave). systemd ANDs repeated conditions together, so no
+  oneshot service is needed.
+  - **Check first:** which flag names `ConditionCPUFeature=` accepts (e.g. whether LZCNT
+    is `abm`), whether every v3 feature is in its table, and that Aurora's systemd
+    supports it.
+  - **Starting the target.** A condition only gates a start, so something still has to
+    start the target. The proposal is a static `multi-user.target.wants/` symlink for
+    **static** targets only. The target file itself still has no `[Install]`.
+    `tests/unit/test_repo_consistency.py` gains a rule that only static targets may be
+    wanted this way.
+  - A failed condition leaves the target inactive (absent, nothing failed).
+- **`vulkan-1.3` depends on the graphics driver**, so it can't be a systemd condition. It
+  needs a probe after the GPU's DRM render node appears.
+  - **The capability means a hardware-accelerated Vulkan 1.3 device.** Mesa's lavapipe
+    reports Vulkan 1.3 on any CPU, including the VMware test VM. Accept only a device
+    with `apiVersion ≥ 1.3`, `deviceType` INTEGRATED_GPU or DISCRETE_GPU, and a driver
+    that isn't lavapipe or llvmpipe.
+  - **Excluded:** `VK_PHYSICAL_DEVICE_TYPE_CPU`, **`VIRTUAL_GPU`** (VMware SVGA,
+    virtio-gpu/venus; decided), and software drivers.
+  - **Mechanism constraints:** nothing but detection pulls in the target; "no accelerated
+    Vulkan" ends as an inactive target, never a failed unit (an `ExecCondition=` skip
+    still satisfies dependents, and an `ExecStart` failure shows in `systemctl
+    --failed`); re-probe on GPU add and remove; no Vulkan initialisation inside a udev
+    worker.
+  - **Kind:** keep `static` if the mechanism allows, so readiness says "Insufficient
+    hardware".
+- **Tests:**
+  - CI: the acceptance rule against recorded `vulkaninfo --json` fixtures (lavapipe
+    only; lavapipe + RADV; VMware SVGA; discrete + integrated), and a lint that every v3
+    feature condition is present.
+  - VM: `vulkan-1.3` is **absent** although lavapipe reports 1.3 (the key negative
+    test), and `x86-64-v3` is present exactly when `/proc/cpuinfo` has the v3 flags.
+  - Desktop: both present.
+
+**0.22 note: readiness runs in the user's session.** Readiness is per user, because the
+user-supplied files are in `~`. The evaluation therefore runs in the user's session, as a
+systemd user service or in the GUI. The system pack daemon only installs, updates,
+removes, pins, and rolls back.
 
 **Two parallel chains, both required before 0.20:**
 - **Neo chain (critical path):** 0.1 → 0.2 → 0.7 → 0.10 → 0.11 → 0.12 → 0.13 → 0.20
@@ -480,6 +524,23 @@ VMware Workstation). The C-tests are defined in `tests/vm/capabilities.sh` and
 
 T-50 (one USB stick boots all three devices with correct capabilities and no failed units)
 also remains open until the hardware exists.
+
+### Stage 0 — pack format (task 0.21)
+
+Defined in `tests/vm/packs.sh` and `tests/vm/README.md`. The unit and integration tests
+run in CI (`capd-tests`).
+
+| ID | Test | Pass condition |
+|---|---|---|
+| P-1 | Factory manifests | Every manifest in `/usr/share/obscura/packs` validates; `obscura-pack list` shows `pack-wine` from the factory root |
+| P-2 | pack-wine on the VM | **Insufficient hardware.** Before 0.2b: `capability-unknown` for `x86-64-v3` and `vulkan-1.3`. After 0.2b: `vulkan-1.3` absent (the VM has no accelerated Vulkan). Ready is checked on the bare-metal desktop |
+| P-3 | No requirements | A fixture pack with no requirements is Ready |
+| P-4 | Hardware hotplug | A fixture requiring `camera`: Missing hardware, then Ready after a webcam is connected (interactive) |
+| P-5 | User files | A fixture with a user file: absent → Missing files; wrong content → Missing files (wrong dump); right content → Ready |
+| P-6 | Removed marker | A `removed` marker hides pack-wine; deleting it restores it |
+| P-7 | Malformed manifest | Skipped with one reported problem; no traceback, no failed units |
+
+P-1…P-7 cover the user-files half of T-70. Its Neo half stays open until 0.28.
 
 ### Stage 0 — telephony
 
