@@ -38,8 +38,13 @@ def set_identifier(name):
     global _identifier
     try:
         _identifier = str(name)
-    except Exception:
-        pass
+    except Exception as error:
+        # Keep the previous identifier; say so on stderr, the one channel left that
+        # doesn't depend on this module's state.
+        try:
+            print(_identifier + ": could not set report identifier: " + repr(error), file=sys.stderr, flush=True)
+        except Exception:
+            pass  # stderr itself is unusable: there is nowhere left to report
 
 
 def _send(priority, message_id, message, fields):

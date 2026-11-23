@@ -473,7 +473,7 @@ def validate_manifest(text, source, signatures, directory_name=None):
         try:
             report.failure("manifest.validate_manifest", error)
         except Exception:
-            pass
+            pass  # report.failure handles its own errors; still fail closed below
         return None, "could not be checked (internal error: " + type(error).__name__ + ")"
 
 
@@ -495,7 +495,7 @@ def load_manifest_file(path, signatures, check_directory=True):
         try:
             report.failure("manifest.load_manifest_file", error)
         except Exception:
-            pass
+            pass  # report.failure handles its own errors; still fail closed below
         return None, "could not be checked (internal error: " + type(error).__name__ + ")"
 
 

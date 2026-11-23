@@ -11,6 +11,7 @@ the error reported through obscura_capd.report, and never READY.
 """
 
 import os
+import sys
 from dataclasses import dataclass
 
 from obscura_capd import report
@@ -239,7 +240,12 @@ def unevaluable(name, error):
             "internal-error", name,
             "Obscura couldn't check this pack (" + type(error).__name__ + ").",
             FIX_COPY_DIAGNOSTICS),))
-    except Exception:
+    except Exception as failure:
+        # Building the detailed result failed; the bare state is still never Ready.
+        try:
+            print("obscura-pack: could not describe an unevaluable pack: " + repr(failure), file=sys.stderr, flush=True)
+        except Exception:
+            pass  # stderr itself is unusable: there is nowhere left to report
         return Readiness(str(name), UNEVALUABLE)
 
 
@@ -259,7 +265,7 @@ def evaluate(manifest, present, vocabulary, runtime_states=None, file_status=Non
         try:
             report.failure("readiness.evaluate", error)
         except Exception:
-            pass
+            pass  # report.failure handles its own errors; still fail closed below
         return unevaluable(getattr(manifest, "name", "?"), error)
 
 

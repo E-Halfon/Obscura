@@ -40,15 +40,16 @@ EXIT_USAGE = 2
 def _print(text):
     try:
         print(text, flush=True)
-    except Exception:
-        pass
+    except Exception as error:
+        # stdout is unusable (closed pipe, bad encoding): report on stderr instead.
+        _error("could not write output: " + repr(error))
 
 
 def _error(message):
     try:
         print("obscura-pack: " + message, file=sys.stderr, flush=True)
     except Exception:
-        pass
+        pass  # stderr itself is unusable: there is nowhere left to report
 
 
 def _parse(argv):
