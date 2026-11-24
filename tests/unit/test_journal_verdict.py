@@ -54,6 +54,33 @@ class RecordedEntriesTest(unittest.TestCase):
         self.assertEqual(journal_verdict.verdicts(recorded(), "obscura-cap-vulkan-1.3.target"), [])
 
 
+FIXTURE_262 = os.path.join(ROOT, "tests", "fixtures", "journal", "gate-systemd-262.jsonl")
+
+
+def recorded_262():
+    with open(FIXTURE_262, encoding="utf-8") as handle:
+        return handle.read().splitlines()
+
+
+class Recorded262Test(unittest.TestCase):
+    """Entries recorded by gate-on-image on systemd 262.1-1.fc45, the image's systemd."""
+
+    def test_skips(self):
+        for unit in ("obscura-test-reject.target", "obscura-test-spam.target"):
+            with self.subTest(unit):
+                self.assertEqual([v for v, _ in journal_verdict.verdicts(recorded_262(), unit)], ["skipped"])
+
+    def test_reached(self):
+        found = journal_verdict.verdicts(recorded_262(), "obscura-test-control.target")
+        self.assertEqual([v for v, _ in found], ["reached"])
+
+    def test_no_structured_field_separates_skip_from_start(self):
+        # Why the text decides on 262 too. If a later systemd adds such a field, prefer it.
+        entries = [json.loads(line) for line in recorded_262()]
+        stable = ("MESSAGE_ID", "JOB_TYPE", "JOB_RESULT", "CODE_FUNC", "_PID")
+        self.assertEqual(len({tuple(e.get(f) for f in stable) for e in entries}), 1)
+
+
 class ClassifyTest(unittest.TestCase):
 
     def entry(self, **fields):
