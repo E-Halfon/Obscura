@@ -396,12 +396,25 @@ accept drift. Shipping beats purity.
     "Insufficient hardware", never "connect a device".
   - **Implemented as:** udev starts `obscura-cap-vulkan-1.3-probe@<renderDN>.service` per
     render node. The probe (`obscura_capd.vulkan_probe`) runs as `ExecCondition=`; the unit
-    is `BindsTo=` the node's device and `Upholds=` the target only while active. A node
-    counts only if a device in `vulkaninfo --json` has `VkPhysicalDeviceDrmPropertiesEXT`
-    for that node (no struct, no count; no fallback), is an integrated or discrete GPU, has
-    its own `apiVersion ≥ 1.3`, and isn't llvmpipe/lavapipe. The probe fails closed:
-    missing vulkaninfo, a crash or signal, a non-zero exit, a timeout (10 s per call, 45 s
-    overall) or bad JSON means absent, with the reason logged. It runs with capd's
+    is `BindsTo=` the node's device, `Before=` and `Upholds=` the target. **The gate:**
+    `Upholds=` pulls the target in like `Wants=` whenever a probe *starts*, so a bare
+    Upholds made `vulkan-1.3` active in the VM although the probe rejected lavapipe (6 s at
+    boot, then an hour, most likely after C-13 started and cancelled a probe for a
+    nonexistent node: the journal's second resolution can't separate it from the restart
+    in the same second; VM pass of 2026-11-23). Now only an accepting probe's `ExecStart=` writes
+    `/run/obscura-cap/vulkan-1.3/<renderDN>/accepted`, inside its `RuntimeDirectory=`
+    (removed whenever the probe goes inactive), and the target carries
+    `ConditionPathExistsGlob=/run/obscura-cap/vulkan-1.3/*/accepted`. `Before=` makes the
+    target's start job wait for the probe's decision, so a rejected or skipped probe never
+    makes the target active, not even briefly. A node counts only if a device in
+    `vulkaninfo --json` has `VkPhysicalDeviceDrmPropertiesEXT` for that node (no struct, no
+    count; no fallback), is an integrated or discrete GPU, has its own `apiVersion ≥ 1.3`,
+    has a driver that isn't llvmpipe/lavapipe/SwiftShader or layered over a host API
+    (Venus, Dozen: Venus can pass the host GPU's type through), and the node's kernel driver
+    isn't a virtual GPU (virtio_gpu, vmwgfx, vkms, vgem). The probe fails closed: missing
+    vulkaninfo, a failing `--summary`, or an unreadable node means absent; a crash, signal,
+    non-zero exit, timeout (10 s per call) or bad JSON for one device means that device
+    doesn't count; past 45 s overall no further devices are read. Every reason is logged. It runs with capd's
     hardening plus `DynamicUser=`, the render group, `DevicePolicy=closed` and
     `DeviceAllow=char-drm`. vulkan-tools is added to the recipe (Aurora ships only
     mesa-vulkan-drivers).
@@ -409,6 +422,17 @@ accept drift. Shipping beats purity.
   as pack manifests), and object paths escape every byte outside `[a-z0-9]` as `_xx`,
   systemd-style: `vulkan-1.3` → `vulkan_2d1_2e3`, `x86-64-v3` → `x86_2d64_2dv3`.
 - **Tests:** §7, "Stage 0 — static capabilities (task 0.2b)".
+
+**Open decision: the OS updater.** Universal Blue's `uupd` updates the image, Flatpaks,
+brew and distrobox on a timer. Obscura's updates must follow its no-surprises policy: one
+updater for OS and packs, never a forced restart mid-work, and "Undo last update"
+(ARCHITECTURE.md §19 table; pack updates and pins in §17–§18.1). uupd works outside that
+policy, and on the 0.2b branch image it already failed a run on a Flatpak user update
+("system operation Deploy not allowed for user", upstream). Decide whether Obscura keeps
+uupd (configured to stage only, behind the pack manager's update UI) or replaces it with
+its own updater (pack manager + bootc image updates). Decide before work on the pack
+manager's update path starts. Until then, test VMs disable `uupd.timer`, and the VM test
+scripts warn when it is enabled.
 
 **0.22 note: readiness runs in the user's session.** Readiness is per user, because the
 user-supplied files are in `~`. The evaluation therefore runs in the user's session, as a
@@ -559,17 +583,20 @@ P-1…P-7 cover the user-files half of T-70. Its Neo half stays open until 0.28.
 
 CI (`capd-tests`): the acceptance rule against `tests/fixtures/vulkan/` (synthetic
 scenarios for each branch; real recordings only for acceptance), the probe's fail-closed
-cases, `systemd-analyze condition` for every x86-64-v3 line on the runner, and lints for
-the units. VM tests are in `tests/vm/capabilities.sh` (C-9 was already bus-policy, so these
+cases, `systemd-analyze condition` for every x86-64-v3 line on the runner, the
+probed-capability gate on the runner's real systemd (`tests/ci/upholds-gate.sh`: 20
+rejecting probe starts never make the stand-in target active and each one evaluated the
+gate; a control run without the gate must show the old bug), and lints for the units. CI
+runs systemd 255 (Ubuntu 24.04), the image 262; the VM tests cover 262. VM tests are in `tests/vm/capabilities.sh` (C-9 was already bus-policy, so these
 start at C-10).
 
 | ID | Test | Pass condition |
 |---|---|---|
 | C-10 | x86-64-v3 on the VM | Present exactly when `/proc/cpuinfo` has the v2+v3 flags; every condition line agrees with its flag; glibc's `ld.so` agrees; nothing failed |
 | C-11 | Boot ordering | capd starts only after the x86-64-v3 target's conditions ran |
-| **C-12** | **lavapipe doesn't count** | lavapipe reports Vulkan ≥ 1.3, yet `vulkan-1.3` is absent; each render-node probe is skipped (`exec-condition`) with a logged reason; no failed units. The same run records `real-vmware-lavapipe-*` with `capture.py`; the CI negative test reads only that recording and fails until it's committed |
-| C-13 | Can't be faked | Manual start of the target refused; rerunning a probe stays absent; a probe for a nonexistent node never runs |
-| C-14 | Unplug, no reboot (mechanism) | A stand-in of the probe and target, bound to the webcam, stops within 5 s of unplugging |
+| **C-12** | **lavapipe doesn't count** | lavapipe reports Vulkan ≥ 1.3, yet `vulkan-1.3` is absent, and never was this boot: the target's `ActiveEnterTimestamp` is 0, the journal has no "Reached target" for it, and capd never announced it; each render-node probe is skipped (`exec-condition`) with a logged reason and no accept marker; no failed units. The same run records `real-vmware-lavapipe-*` with `capture.py`; the CI negative test reads only that recording and fails until it's committed |
+| C-13 | Can't be faked | Manual start of the target refused; restarting each probe 20 times never activates the target, and each restart evaluated the gate (`ConditionResult=no`); `obscura-cap watch` sees no `+vulkan-1.3`; a probe for a nonexistent node never runs, and the target's start job waits behind it instead of starting |
+| C-14 | Unplug, no reboot (mechanism) | A stand-in of the probe and target (`tests/lib/stand-in.sh`), bound to the webcam, writes its marker and activates the target, then stops within 5 s of unplugging, marker gone |
 | P-2 | pack-wine on the VM (after 0.2b) | Insufficient hardware, `vulkan-1.3` absent rather than unknown |
 | D-1 | Desktop: both present | `x86-64-v3` and `vulkan-1.3` present; pack-wine Ready |
 | D-2 | Desktop: recordings | `capture.py` recordings of the real GPUs committed as `real-*` |
@@ -585,6 +612,14 @@ start at C-10).
   probe's `DeviceAllow=char-drm` blocks, so it reads absent (fails safe). NVK needs only
   DRM. Decide when the desktop GPU is chosen: allow `char-nvidia*`, or require NVK.
 - D-1 to D-3 need the desktop (with T-50).
+- **Known edge cases, accepted:** the target waits for the slowest pending probe, so a
+  hung second GPU can delay `vulkan-1.3` by up to the probe's `TimeoutStartSec=` (90 s); a
+  GPU stuck in uninterruptible sleep, or a failing `touch` of the marker, shows as a failed
+  probe unit (visible, and the capability stays absent); more than 5 probe starts of one
+  node within 10 s (rapid replugs) hit systemd's default start limit and leave that probe
+  `start-limit-hit` (failed, absent) until the next replug after the window; with
+  `clearcpuid=`/an XCR0 that disables AVX, systemd's `ConditionCPUFeature=` and glibc
+  can disagree (`osxsave` covers the usual case).
 
 ### Stage 0 — telephony
 

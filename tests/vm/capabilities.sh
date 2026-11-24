@@ -27,6 +27,12 @@ trap 'echo "ERROR: ${FUNCNAME[0]:-main} line ${LINENO}: ${BASH_COMMAND}" >&2' ER
 
 readonly VOCABULARY_DIR=/usr/share/obscura/capabilities.d
 readonly WAIT_SECONDS=2
+HERE=$(cd "$(dirname "$0")" && pwd)
+readonly HERE
+# shellcheck source=SCRIPTDIR/../lib/stand-in.sh
+. "$HERE/../lib/stand-in.sh"
+# shellcheck source=SCRIPTDIR/../lib/vm-checks.sh
+. "$HERE/../lib/vm-checks.sh"
 SKIPPED=0
 
 # Each test runs in its own subshell (run_test), so failures are recorded in a file
@@ -239,20 +245,23 @@ test_restart() {
 }
 
 test_semantics() {
-    local name status
+    local name status output words
     for name in $(declared); do
-        status=$(has_status "$name")
-        if [ "$status" = 0 ] || [ "$status" = 1 ]; then
-            pass "has $name -> $status"
+        status=0
+        output=$(obscura-cap has "$name" 2>/dev/null) || status=$?
+        words="$status:$output"
+        if [ "$words" = "0:present" ] || [ "$words" = "1:absent" ]; then
+            pass "has $name -> $output ($status)"
         else
-            fail "has $name -> $status (declared names must answer 0 or 1)"
+            fail "has $name -> exit $status, printed '$output' (declared names answer present/0 or absent/1)"
         fi
     done
-    status=$(has_status not-a-capability)
-    if [ "$status" = 2 ]; then
-        pass "unknown name -> 2"
+    status=0
+    output=$(obscura-cap has not-a-capability 2>/dev/null) || status=$?
+    if [ "$status" = 2 ] && [ -z "$output" ]; then
+        pass "unknown name -> 2, nothing on stdout"
     else
-        fail "unknown name -> $status, expected 2"
+        fail "unknown name -> exit $status, printed '$output'; expected 2 and nothing"
     fi
     status=$(has_status windows-apps)
     if [ "$status" = 2 ]; then
@@ -342,6 +351,46 @@ test_mcelog() {
 readonly X86_TARGET=/usr/lib/systemd/system/obscura-cap-x86-64-v3.target
 readonly VULKAN_TARGET=obscura-cap-vulkan-1.3.target
 readonly VULKAN_PROBE=obscura-cap-vulkan-1.3-probe
+readonly VULKAN_MARKERS=/run/obscura-cap/vulkan-1.3
+readonly UNIT_STARTED=39f53479d3a045ac8e11786248231fbf   # SD_MESSAGE_UNIT_STARTED ("Reached target")
+
+# vulkan_never_active: this boot, the vulkan-1.3 target never entered active, PID 1 never
+# logged reaching it, and capd never announced it (task 0.2b gate; VM pass of 2026-11-23).
+vulkan_never_active() {
+    if [ "$(systemctl show -P ActiveEnterTimestampMonotonic "$VULKAN_TARGET")" = 0 ]; then
+        pass "$VULKAN_TARGET never entered active this boot (ActiveEnterTimestamp 0)"
+    else
+        fail "$VULKAN_TARGET entered active this boot at $(systemctl show -P ActiveEnterTimestamp "$VULKAN_TARGET")"
+    fi
+    # Journal output is captured before it is searched: under pipefail, grep -q could
+    # SIGPIPE the writer, and the check would read as "not found", a false pass.
+    local structured text description announced
+    description=$(systemctl show -P Description "$VULKAN_TARGET")
+    structured=$(journalctl -b -q --no-pager MESSAGE_ID="$UNIT_STARTED" UNIT="$VULKAN_TARGET")
+    text=$(journalctl -b -q --no-pager -o cat _PID=1)
+    if [ -n "$structured" ] || [[ "$text" == *"Reached target $VULKAN_TARGET"* ]] \
+        || [[ "$text" == *"Reached target $description"* ]]; then
+        fail "the journal has 'Reached target $VULKAN_TARGET' this boot"
+    else
+        pass "no 'Reached target $VULKAN_TARGET' in this boot's journal"
+    fi
+    announced=$(journalctl -b -q --no-pager -o cat SYSLOG_IDENTIFIER=obscura-capd OBSCURA_CAPABILITY=vulkan-1.3)
+    if [[ "$announced" == *"capability present: vulkan-1.3"* ]]; then
+        fail "capd announced Added(vulkan-1.3) this boot"
+    else
+        pass "capd never announced Added(vulkan-1.3) this boot"
+    fi
+}
+
+# vulkan_gate_evaluated <before>: the target's start job ran and its condition said no
+# since ConditionTimestampMonotonic was <before>. Without this, "never active" would also
+# hold if nothing had pulled the target in at all.
+vulkan_gate_evaluated() {
+    local after
+    after=$(systemctl show -P ConditionTimestampMonotonic "$VULKAN_TARGET")
+    [ "$after" != 0 ] && [ "$after" != "$1" ] \
+        && [ "$(systemctl show -P ConditionResult "$VULKAN_TARGET")" = no ]
+}
 
 # The /proc/cpuinfo spelling of a systemd ConditionCPUFeature= name; empty if the kernel
 # hides the flag (osxsave).
@@ -355,7 +404,7 @@ cpuinfo_flag() {
 
 # C-10: x86-64-v3 is present exactly when the CPU has the psABI v2+v3 flags.
 test_x86_64_v3() {
-    local flags feature shown expected=0 line systemd_says cpu_says ldso status
+    local flags feature shown expected=0 systemd_says cpu_says ldso status
     flags=" $(grep -m1 '^flags' /proc/cpuinfo | cut -d: -f2) "
     for feature in $(sed -nE 's/^[[:space:]]*ConditionCPUFeature[[:space:]]*=[[:space:]]*//p' "$X86_TARGET"); do
         shown=$(cpuinfo_flag "$feature")
@@ -469,6 +518,14 @@ test_vulkan_lavapipe() {
     else
         fail "$VULKAN_TARGET is $(systemctl show -P ActiveState "$VULKAN_TARGET")"
     fi
+    # Not even for an instant: run this before vulkan-no-fake restarts any probe.
+    vulkan_never_active
+    # ...and that is because the gate said no, not because nothing pulled the target in.
+    if vulkan_gate_evaluated 0; then
+        pass "$VULKAN_TARGET's start job ran this boot and its condition said no"
+    else
+        fail "$VULKAN_TARGET's condition was never evaluated this boot (ConditionResult=$(systemctl show -P ConditionResult "$VULKAN_TARGET")): did udev start a probe?"
+    fi
     units=$(systemctl --failed --no-legend --plain | grep -v '^$' || true)
     if [ -z "$units" ]; then
         pass "no failed units"
@@ -486,6 +543,9 @@ test_vulkan_lavapipe() {
         else
             fail "$unit: ActiveState=$active Result=$result (expected inactive, exec-condition)"
         fi
+        if [ -e "$VULKAN_MARKERS/$node" ]; then
+            fail "$VULKAN_MARKERS/$node exists although the probe rejected $node"
+        fi
         if journalctl -b -q --no-pager SYSLOG_IDENTIFIER=obscura-cap-vulkan-probe | grep -q "$node"; then
             pass "the journal gives the reason for $node:"
             journalctl -b -q --no-pager -o cat SYSLOG_IDENTIFIER=obscura-cap-vulkan-probe | grep "$node" | tail -n 1 | sed 's/^/      /'
@@ -500,59 +560,130 @@ test_vulkan_lavapipe() {
     fi
 }
 
-# C-13: vulkan-1.3 can't be faked.
+# C-13: vulkan-1.3 can't be faked, and no probe start ever makes the target active, even
+# briefly (the gate: the probe is Before= the target, whose ConditionPathExistsGlob= needs
+# an accept marker that only an accepting probe writes).
+readonly NO_FAKE_ROUNDS=20
 test_vulkan_no_fake() {
-    local node
+    local node round before unit watch_file probe_ts
     if systemctl start "$VULKAN_TARGET" 2>/dev/null; then
         fail "manual start of $VULKAN_TARGET was allowed"
     else
         pass "manual start of $VULKAN_TARGET refused"
     fi
+
+    # Anything capd announces while the probes are restarted ends up here.
+    watch_file=$(mktemp)
+    obscura-cap watch >"$watch_file" 2>/dev/null &
+    NO_FAKE_WATCH=$!
+    NO_FAKE_WATCH_FILE=$watch_file
+    trap cleanup_no_fake EXIT
+    sleep 1
+
     for node in $(render_nodes); do
-        systemctl restart "$VULKAN_PROBE@$node.service" || true
-        if [ "$(has_status vulkan-1.3)" = 1 ]; then
-            pass "rerunning the probe for $node leaves vulkan-1.3 absent"
-        else
-            fail "rerunning the probe for $node made vulkan-1.3 present"
-        fi
+        unit="$VULKAN_PROBE@$node.service"
+        for round in $(seq 1 "$NO_FAKE_ROUNDS"); do
+            before=$(systemctl show -P ConditionTimestampMonotonic "$VULKAN_TARGET")
+            # Skipped starts count toward the default start limit (5 in 10 s), and a
+            # start-limit-hit probe would stay failed; reset-failed resets the limiter.
+            systemctl reset-failed "$unit" 2>/dev/null || true
+            systemctl restart "$unit" || true
+            # restart waits only for the probe's job; the target's job (pulled in by
+            # Upholds=, ordered after the probe) may still be queued.
+            if ! stand_in_wait_idle "$VULKAN_TARGET" 15; then
+                fail "$node round $round: $VULKAN_TARGET still has a job after 15 s"
+            fi
+            if ! vulkan_gate_evaluated "$before"; then
+                fail "$node round $round: the gate wasn't evaluated (ConditionResult=$(systemctl show -P ConditionResult "$VULKAN_TARGET")), so this round proves nothing"
+            fi
+            if [ "$(systemctl show -P ActiveState "$VULKAN_TARGET")" != inactive ] \
+                || [ "$(systemctl show -P ActiveEnterTimestampMonotonic "$VULKAN_TARGET")" != 0 ]; then
+                fail "$node round $round: $VULKAN_TARGET became active"
+            fi
+            if [ "$(systemctl show -P Result "$unit")" != exec-condition ]; then
+                fail "$node round $round: $unit Result=$(systemctl show -P Result "$unit"), expected exec-condition"
+            fi
+            if [ -e "$VULKAN_MARKERS/$node" ]; then
+                fail "$node round $round: the rejecting probe left $VULKAN_MARKERS/$node"
+            fi
+        done
+        pass "$NO_FAKE_ROUNDS restarts of $unit: the gate said no each time, the target never active"
     done
-    # A probe for a node that doesn't exist waits for its device and never runs.
-    systemctl start --no-block "$VULKAN_PROBE@renderD999.service" 2>/dev/null || true
+
+    # A probe for a node that doesn't exist waits for its device and never runs. Its start
+    # still queues a start of the target (Upholds=), which must wait behind it (Before=)
+    # instead of starting at once: in the old design this left vulkan-1.3 active for an hour.
+    unit="$VULKAN_PROBE@renderD999.service"
+    before=$(systemctl show -P ConditionTimestampMonotonic "$VULKAN_TARGET")
+    systemctl start --no-block "$unit" 2>/dev/null || true
     sleep 2
-    if [ "$(systemctl show -P ActiveState "$VULKAN_PROBE@renderD999.service")" != active ] \
-        && [ "$(systemctl show -P ExecMainStartTimestampMonotonic "$VULKAN_PROBE@renderD999.service")" = 0 ] \
-        && [ "$(has_status vulkan-1.3)" = 1 ]; then
-        pass "a probe for a nonexistent node doesn't run"
+    if [ -n "$(systemctl list-jobs --no-legend --plain "$VULKAN_TARGET")" ]; then
+        pass "the target's start job waits behind $unit"
     else
-        fail "$VULKAN_PROBE@renderD999.service ran or vulkan-1.3 became present"
+        fail "no queued start job for $VULKAN_TARGET behind $unit (expected one, ordered after the probe)"
     fi
-    systemctl stop "$VULKAN_PROBE@renderD999.service" 2>/dev/null || true
+    probe_ts=$(systemctl show -P ExecMainStartTimestampMonotonic "$unit")
+    systemctl stop "$unit" 2>/dev/null || true
+    stand_in_wait_idle "$VULKAN_TARGET" 15 || fail "$VULKAN_TARGET still has a job 15 s after cancelling $unit"
+    if [ "$probe_ts" = 0 ] && [ ! -e "$VULKAN_MARKERS/renderD999" ] \
+        && [ "$(systemctl show -P ActiveState "$VULKAN_TARGET")" = inactive ] \
+        && [ "$(systemctl show -P ActiveEnterTimestampMonotonic "$VULKAN_TARGET")" = 0 ]; then
+        if vulkan_gate_evaluated "$before"; then
+            pass "a probe for a nonexistent node never ran; the target's job ran after it and the gate said no"
+        else
+            pass "a probe for a nonexistent node never ran; the target's job was cancelled with it"
+        fi
+    else
+        fail "$unit ran, left a marker, or made $VULKAN_TARGET active"
+    fi
+
+    sleep 1
+    if ! kill -0 "$NO_FAKE_WATCH" 2>/dev/null; then
+        fail "obscura-cap watch exited early, so it couldn't have seen an Added(vulkan-1.3)"
+    elif grep -qx '+vulkan-1.3' "$watch_file"; then
+        fail "capd announced Added(vulkan-1.3) while the probes were restarted"
+    else
+        pass "capd never announced Added(vulkan-1.3) during the restarts"
+    fi
+    vulkan_never_active
+}
+
+# EXIT trap of test_vulkan_no_fake's subshell. Never fails: a failing command in an EXIT
+# trap would trip the inherited ERR trap and turn a pass into an abort.
+cleanup_no_fake() {
+    trap - ERR
+    set +e
+    local job
+    kill "${NO_FAKE_WATCH:-}" 2>/dev/null
+    rm -f "${NO_FAKE_WATCH_FILE:-}"
+    systemctl stop "$VULKAN_PROBE@renderD999.service" 2>/dev/null
+    # BindsTo= also queued a start of the nonexistent device; cancel it instead of letting
+    # it time out after ~90 s.
+    for job in $(systemctl list-jobs --no-legend --plain dev-dri-renderD999.device 2>/dev/null | awk '{print $1}'); do
+        systemctl cancel "$job" 2>/dev/null
+    done
+    return 0
 }
 
 # C-14: unplugging the last qualifying device stops the capability, without a reboot. The
 # VM has no qualifying GPU, so this builds a stand-in from the installed probe and target
-# (only the device, the target name and the detection command are swapped) and binds it to
-# the passed-through webcam. BindsTo=, Upholds= and StopWhenUnneeded= are the real lines.
+# (tests/lib/stand-in.sh: only the names, the marker path, the detection command and the
+# device change) and binds it to the passed-through webcam. BindsTo=, Upholds=, Before=,
+# the marker, the gate and StopWhenUnneeded= are the real lines.
+readonly UNPLUG_LABEL=unplug
+readonly UNPLUG_TARGET=obscura-test-$UNPLUG_LABEL.target
+readonly UNPLUG_PROBE=obscura-test-$UNPLUG_LABEL-probe
 test_unplug_mechanism() {
-    local run=/run/systemd/system stand_in target_unit device elapsed=0 before after
+    local run=/run/systemd/system device elapsed=0 before after
     if [ ! -t 0 ]; then
         skip "interactive: needs you to connect and disconnect the webcam in VMware"
     fi
-    stand_in="$run/obscura-test-upholds@.service"
-    target_unit="$run/obscura-test-upheld.target"
-    sed -e 's/dev-dri-%i\.device/dev-%i.device/g' \
-        -e "s/$VULKAN_TARGET/obscura-test-upheld.target/g" \
-        -e 's#^ExecCondition=.*#ExecCondition=/usr/bin/true#' \
-        -e 's/^Description=.*/Description=Obscura C-14 stand-in probe for %i/' \
-        -e '/^Before=multi-user.target/d' \
-        "/usr/lib/systemd/system/$VULKAN_PROBE@.service" >"$stand_in"
-    sed -e 's/^Description=.*/Description=Obscura C-14 stand-in capability/' \
-        "/usr/lib/systemd/system/$VULKAN_TARGET" >"$target_unit"
-    # run_test runs each test in its own subshell, so this cleans up whenever the test ends.
-    trap 'systemctl stop "obscura-test-upholds@*.service" obscura-test-upheld.target 2>/dev/null; rm -f "$stand_in" "$target_unit"; systemctl daemon-reload' EXIT
-    grep -qx 'BindsTo=dev-%i.device' "$stand_in" || { fail "stand-in lost BindsTo="; return 0; }
-    grep -qx 'Upholds=obscura-test-upheld.target' "$stand_in" || { fail "stand-in lost Upholds="; return 0; }
-    grep -qx 'StopWhenUnneeded=yes' "$target_unit" || { fail "stand-in target lost StopWhenUnneeded="; return 0; }
+    trap cleanup_unplug EXIT
+    stand_in_write /usr/lib/systemd/system vulkan-1.3 "$UNPLUG_LABEL" /usr/bin/true dev "$run"
+    if ! stand_in_check "$UNPLUG_LABEL" "$run"; then
+        fail "the stand-in lost part of the real gate"
+        return 0
+    fi
     systemctl daemon-reload
 
     echo "Disconnect the webcam now (VM > Removable Devices > <camera> > Disconnect), then press Enter."
@@ -564,40 +695,63 @@ test_unplug_mechanism() {
     after=$(systemctl list-units --type=device --plain --no-legend 'dev-video*' | awk '{print $1}' | sort)
     device=$(comm -13 <(printf '%s\n' "$before") <(printf '%s\n' "$after") | head -n 1)
     if [ -z "$device" ]; then
-        fail "no new dev-video*.device appeared"
+        fail "no new dev-video*.device appeared (was the webcam still connected? see VMware's USB settings)"
         return 0
     fi
     device=${device#dev-}
     device=${device%.device}
-    systemctl start "obscura-test-upholds@$device.service"
-    if [ "$(systemctl show -P ActiveState obscura-test-upheld.target)" = active ]; then
-        pass "stand-in probe on $device upholds the stand-in target"
+    systemctl start "$UNPLUG_PROBE@$device.service"
+    stand_in_wait_idle "$UNPLUG_TARGET" 10 || true
+    if [ "$(systemctl show -P ActiveState "$UNPLUG_TARGET")" = active ] \
+        && [ -e "/run/obscura-cap/test-$UNPLUG_LABEL/$device/accepted" ]; then
+        pass "the accepting stand-in probe on $device wrote its marker and upholds the stand-in target"
     else
-        fail "stand-in target not active with the device present"
+        fail "stand-in target $(systemctl show -P ActiveState "$UNPLUG_TARGET") with the device present"
         return 0
     fi
 
     echo "Disconnect the webcam, then press Enter."
     read -r _
-    while [ "$(systemctl show -P ActiveState obscura-test-upheld.target)" != inactive ] && [ "$elapsed" -lt 50 ]; do
+    while [ "$(systemctl show -P ActiveState "$UNPLUG_TARGET")" != inactive ] && [ "$elapsed" -lt 50 ]; do
         sleep 0.1
         elapsed=$((elapsed + 1))
     done
-    if [ "$(systemctl show -P ActiveState obscura-test-upheld.target)" = inactive ]; then
+    if [ "$(systemctl show -P ActiveState "$UNPLUG_TARGET")" = inactive ]; then
         pass "unplugging the last device stopped the target in ~$((elapsed * 100)) ms, no reboot"
     else
-        fail "the target is still $(systemctl show -P ActiveState obscura-test-upheld.target) 5 s after unplugging"
+        fail "the target is still $(systemctl show -P ActiveState "$UNPLUG_TARGET") 5 s after unplugging"
     fi
-    if [ "$(systemctl show -P ActiveState "obscura-test-upholds@$device.service")" = inactive ]; then
-        pass "the stand-in probe stopped with its device (BindsTo=)"
+    if [ "$(systemctl show -P ActiveState "$UNPLUG_PROBE@$device.service")" = inactive ] \
+        && [ ! -e "/run/obscura-cap/test-$UNPLUG_LABEL/$device" ]; then
+        pass "the stand-in probe stopped with its device (BindsTo=) and its marker is gone"
     else
-        fail "the stand-in probe is still $(systemctl show -P ActiveState "obscura-test-upholds@$device.service")"
+        fail "the stand-in probe is $(systemctl show -P ActiveState "$UNPLUG_PROBE@$device.service") or its marker remains"
     fi
     if [ -z "$(systemctl --failed --no-legend --plain | grep -v '^$' || true)" ]; then
         pass "no failed units"
     else
         fail "failed units after unplugging"
     fi
+}
+
+# EXIT trap of test_unplug_mechanism's subshell. The stand-in target refuses a manual stop
+# (RefuseManualStop=, copied from the real one), so this stops the stand-in probes and lets
+# StopWhenUnneeded= stop the target, waits for that (removing the unit file of an active
+# unit would leave it "not-found, active"), then removes the files. Never fails: a failing
+# command here tripped the inherited ERR trap ("run_test line 1: return 0") before.
+cleanup_unplug() {
+    trap - ERR
+    set +e
+    local waited=0
+    systemctl stop "$UNPLUG_PROBE@*.service" >/dev/null 2>&1
+    while [ "$(systemctl show -P ActiveState "$UNPLUG_TARGET" 2>/dev/null)" = active ] && [ "$waited" -lt 50 ]; do
+        sleep 0.1
+        waited=$((waited + 1))
+    done
+    rm -f "/run/systemd/system/$UNPLUG_PROBE@.service" "/run/systemd/system/$UNPLUG_TARGET"
+    rm -rf "/run/obscura-cap/test-$UNPLUG_LABEL"
+    systemctl daemon-reload >/dev/null 2>&1
+    return 0
 }
 
 # run_test <function> [args]: runs one test in a subshell with set -e in force.
@@ -633,6 +787,7 @@ main() {
     fi
     local test=${1:-all}
     shift || true
+    warn_auto_update
     case "$test" in
         state) run_test test_state "$@" ;;
         virt) run_test test_virt ;;
