@@ -78,9 +78,24 @@ class PresenceTableTest(unittest.TestCase):
 
 
 class ObjectPathTest(unittest.TestCase):
-    def test_hyphens_become_underscores(self):
-        self.assertEqual(object_path_for("x86-64-v3"), "/org/obscura/Capabilities1/cap/x86_64_v3")
-        self.assertEqual(object_path_for("virt"), "/org/obscura/Capabilities1/cap/virt")
+    def test_escaping(self):
+        prefix = "/org/obscura/Capabilities1/cap/"
+        self.assertEqual(object_path_for("x86-64-v3"), prefix + "x86_2d64_2dv3")
+        self.assertEqual(object_path_for("vulkan-1.3"), prefix + "vulkan_2d1_2e3")
+        self.assertEqual(object_path_for("virt"), prefix + "virt")
+        self.assertEqual(object_path_for("ram-32g"), prefix + "ram_2d32g")
+
+    def test_one_to_one(self):
+        """Names that differ only in separators still get distinct paths."""
+        names = ["a-1.3", "a.1-3", "a-1-3", "a.1.3", "a1-3", "a-13", "vulkan-1.3", "vulkan-13"]
+        paths = [object_path_for(name) for name in names]
+        self.assertEqual(len(set(paths)), len(names))
+
+    def test_paths_are_valid_dbus_object_paths(self):
+        import re
+        for name in ("x86-64-v3", "vulkan-1.3", "3d", "virt"):
+            with self.subTest(name):
+                self.assertRegex(object_path_for(name), re.compile(r"^(/[A-Za-z0-9_]+)+$"))
 
 
 if __name__ == "__main__":

@@ -16,8 +16,11 @@
 set -Eeuo pipefail
 trap 'echo "ERROR: ${FUNCNAME[0]:-main} line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
 
-readonly HERE=$(cd "$(dirname "$0")" && pwd)
+HERE=$(cd "$(dirname "$0")" && pwd)
+readonly HERE
 readonly FIXTURES=${OBSCURA_FIXTURES:-$HERE/../fixtures}
+# shellcheck source=SCRIPTDIR/../lib/vm-checks.sh
+. "$HERE/../lib/vm-checks.sh"
 readonly FACTORY_ROOT=/usr/share/obscura/packs
 readonly VOCABULARY_DIR=/usr/share/obscura/capabilities.d
 readonly WAIT_SECONDS=10
@@ -213,6 +216,7 @@ main() {
         exit 1
     fi
     local test=${1:-all}
+    warn_auto_update
     case "$test" in
         factory) run_test test_factory ;;
         wine) run_test test_wine ;;

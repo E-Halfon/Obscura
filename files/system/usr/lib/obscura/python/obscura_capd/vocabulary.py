@@ -13,9 +13,11 @@ from dataclasses import dataclass
 from obscura_capd import report
 from obscura_capd.constants import API_VERSION, KINDS, TARGET_PREFIX, TARGET_SUFFIX
 
-# Lowercase letters, digits, hyphens; no underscores, so the object-path mapping
-# (hyphen -> underscore) stays one-to-one.
-NAME_PATTERN = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+# Lowercase letters and digits, in runs joined by single hyphens or dots (`vulkan-1.3`).
+# No underscores: the object-path escaping (state.object_path_for) uses `_` as its escape
+# character, so it stays one-to-one. Pack manifests use the same rule
+# (obscura_packs.constants.CAPABILITY_NAME_PATTERN).
+NAME_PATTERN = re.compile(r"^[a-z0-9]+([.-][a-z0-9]+)*$")
 
 
 class DeclarationError(ValueError):

@@ -2,7 +2,7 @@
 
 **Status:** Stage 0 in progress
 **Version:** 3.1
-**Last updated:** 2026-11-21
+**Last updated:** 2026-11-24
 **Companion documents:** CAMERA-OBSCURA-BUILD-BRIEF.md (plan), PACKS.md (pack catalog)
 
 > **If you are an AI assistant reading this at the start of a session:** this document is
@@ -139,6 +139,8 @@ services it activates, and the UI surfaces it exposes. Nothing more.
 
 | Capability | Detection | Activates | Present on |
 |---|---|---|---|
+| `x86-64-v3` | static: `ConditionCPUFeature=` lines (psABI v2 + v3) checked at boot | lets `pack-wine`, `pack-proton` run | all |
+| `vulkan-1.3` | udev: DRM render node appears → per-node probe (hardware GPU with Vulkan 1.3; lavapipe and virtual GPUs excluded) | lets `pack-wine`, `pack-proton` run (DXVK, VKD3D-Proton) | all |
 | `virt` | udev: kvm misc device (`/dev/kvm`) appears | lets VM packs use KVM (e.g. `pack-windows-vm`) | all |
 | `apple-coprocessor` | link peer responds | mirror client, virtual cam/audio, allowlist | opt-in per build |
 | `telephony` | udev: modem on USB | ModemManager, voice audio bridge, dialer | opt-in per build |
@@ -168,6 +170,24 @@ bus) loads the target for every declared capability (`/usr/share/obscura/capabil
 and mirrors its state; it never detects anything itself. Upstream units that fail on
 absent hardware get a drop-in condition (e.g. mcelog outside Intel hardware with
 `/dev/mcelog`) so they are skipped, not failed.
+
+Two variations keep the same rule (task 0.2b). A **static** capability is a fixed fact of
+the machine: its target carries systemd conditions (`ConditionCPUFeature=` for
+`x86-64-v3`), `sysinit.target` wants it through a drop-in, and a failed condition leaves
+it inactive. The target is ordered before `sysinit.target` and capd after it, so capd
+never sees a static target that hasn't been evaluated yet. A **probed** device capability
+is one udev can't decide by itself, because the answer depends on a driver (`vulkan-1.3`).
+udev starts a probe unit per device instead of the target. The probe runs its check as
+`ExecCondition=`; only an accepting probe's `ExecStart=` writes
+`/run/obscura-cap/<name>/<dev>/accepted`, in its `RuntimeDirectory=`, which systemd removes
+whenever the probe goes inactive. The probe is `Before=` and `Upholds=` the target, and the
+target is gated by `ConditionPathExistsGlob=` on those markers, so a rejecting probe can
+never make it active, not even briefly: `Upholds=` pulls the target in like `Wants=`
+whenever a probe starts, and `Before=` makes that start wait for the probe's decision. When
+the check fails (or can't run), systemd skips the probe and nothing is failed. The marker
+is read only by that condition; capd mirrors the target, as for every capability. The
+probe is `BindsTo=` its device, so removing the last qualifying device stops the target
+through `StopWhenUnneeded`, with no reboot.
 
 **One universal image.** Capabilities are detected at **runtime**, never composed at
 build time. Per-host composition (e.g. one NixOS flake per device) fails the flash-drive
@@ -707,6 +727,32 @@ stays inside portable devices (small, ~1 W); the Switch belongs in a home coproc
   *Needs another pack* and *Couldn't evaluate*, and an error never yields Ready (§17.3).
   Readiness is per user, so it's evaluated in the user's session, and the system pack
   daemon only installs (task 0.22)
+- **Static and probed capabilities (task 0.2b, §4):**
+  - a **static** capability (`x86-64-v3`) is a target gated by systemd conditions
+    (`ConditionCPUFeature=`, spelled as in systemd's CPUID table). A drop-in makes
+    `sysinit.target` want each static target, which is explicitly `Before=sysinit.target`;
+    `obscura-capd` is `After=` each one, so it never reads a static target before its
+    start job ran
+  - where udev can't decide presence (`vulkan-1.3`), udev starts a per-device **probe**
+    unit (`obscura-cap-<name>-probe@<dev>.service`). The probe runs as `ExecCondition=`,
+    is `BindsTo=` its device, and is `Before=` and `Upholds=` its own target. This is the
+    only exception, besides the static drop-in, to "nothing pulls in a capability", and it
+    is **gated**: only an accepting probe writes `/run/obscura-cap/<name>/<dev>/accepted`
+    (its `RuntimeDirectory=`), and the target has `ConditionPathExistsGlob=` on those
+    markers. A bare `Upholds=` plus `ExecCondition=` was rejected: Upholds pulls the target
+    in like Wants as soon as the probe starts, so `vulkan-1.3` became active in the VM
+    before the probe rejected lavapipe (VM pass, 2026-11-23). A rejecting probe never makes
+    the target active, absence is never a failed unit, the marker is never a source of
+    truth for capd, and unplugging the last qualifying device stops the target without a
+    reboot
+  - `vulkan-1.3` means **hardware-accelerated** Vulkan 1.3: a device matched to the render
+    node through `VK_EXT_physical_device_drm` (no DRM properties, no count), type
+    integrated or discrete GPU, its own `apiVersion` ≥ 1.3. CPU (llvmpipe/lavapipe),
+    `VIRTUAL_GPU` (VMware SVGA, virtio-gpu/venus) and `OTHER` never count, nor do drivers
+    layered over a host API (Venus, Dozen, whatever type they report) or render nodes of
+    virtual-GPU kernel drivers (virtio_gpu, vmwgfx, vkms, vgem). The probe fails closed
+  - capability names may contain dots; object paths escape every byte outside `[a-z0-9]`
+    as `_xx` (`vulkan-1.3` → `vulkan_2d1_2e3`)
 - **GUI-first: no normal task requires a terminal (§19)**
 - **KDE Plasma as the desktop shell, stripped and themed; no custom wlroots compositor**
 - **Typed action API as the single path for changing settings (§20)**
@@ -751,6 +797,7 @@ stays inside portable devices (small, ~1 W); the Switch belongs in a home coproc
 | Assistant running shell commands | Typed action API only (§20) |
 | Assistant reading files, web pages, or other input | Input is the Settings text box only (§21) |
 | Unattended automations running confirm-tier actions | Only free-tier actions run without the user (§22) |
+| Probed capability as bare `Upholds=` + `ExecCondition=` (no gate on the target) | `Upholds=` pulls the target in like `Wants=` at every probe start, so a rejecting probe still made `vulkan-1.3` active (VM, 2026-11-23). The target is gated on accept markers instead (§4) |
 
 ---
 

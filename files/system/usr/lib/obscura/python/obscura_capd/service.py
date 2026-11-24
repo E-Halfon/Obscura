@@ -214,12 +214,24 @@ class Exporter:
                 properties = capability_properties(self._vocabulary[name], since)
                 self._manager.InterfacesAdded.emit(path, {CAPABILITY_INTERFACE: properties})
                 self._manager.Added.emit(name)
-                report.notice("capability present: " + name, OBSCURA_CAPABILITY=name)
             elif transition == "removed":
                 self._manager.InterfacesRemoved.emit(path, [CAPABILITY_INTERFACE])
                 self._manager.Removed.emit(name)
-                report.notice("capability absent: " + name, OBSCURA_CAPABILITY=name)
             else:
                 raise ValueError("unknown transition " + repr(transition))
         except Exception as error:
             report.failure("Exporter.announce", error)
+        self._log_transition(name, transition)
+
+    def _log_transition(self, name, transition):
+        """One journal entry per state transition, logged even if emitting Added/Removed
+        failed (that failure is reported separately), so a test can tell after the fact
+        whether a capability ever appeared this boot:
+        journalctl -b SYSLOG_IDENTIFIER=obscura-capd OBSCURA_CAPABILITY=<name> OBSCURA_TRANSITION=added"""
+        try:
+            word = {"added": "present", "removed": "absent"}.get(transition)
+            if word is not None:
+                report.notice("capability " + word + ": " + name, OBSCURA_CAPABILITY=name,
+                              OBSCURA_TRANSITION=transition)
+        except Exception as error:
+            report.failure("Exporter._log_transition", error)

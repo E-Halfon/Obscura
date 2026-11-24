@@ -1,0 +1,42 @@
+# Camera Obscura capability: x86-64-v3 (ARCHITECTURE.md §4). A static capability.
+# Active = present, inactive = absent. Never "failed".
+# sysinit.target wants this target (sysinit.target.d/50-obscura-static-capabilities.conf).
+# The conditions below gate the start: if any fails, the target stays inactive (absent).
+# Manual start and stop are refused so the state can't be faked.
+#
+# The features are the x86-64 psABI v2 and v3 levels, spelled as systemd's CPUID table
+# spells them (src/basic/virt.c, verified at systemd v262): FMA is "fma3", LZCNT is "abm",
+# SSE3 is "pni". A misspelled name fails silently, so the capd-tests workflow runs
+# `systemd-analyze condition` on every line and requires all to be true.
+#
+# Ordered before sysinit.target explicitly, so obscura-capd (after basic.target, and after
+# this target by name) never reads it before its start job has finished.
+[Unit]
+Description=Obscura capability: An x86-64-v3 CPU (AVX2, BMI2, FMA)
+Documentation=file:/usr/share/obscura/capabilities.d/x86-64-v3.toml
+DefaultDependencies=no
+Before=sysinit.target
+Conflicts=shutdown.target
+Before=shutdown.target
+StopWhenUnneeded=yes
+RefuseManualStart=yes
+RefuseManualStop=yes
+# x86-64-v2
+ConditionCPUFeature=cx16
+ConditionCPUFeature=lahf_lm
+ConditionCPUFeature=popcnt
+ConditionCPUFeature=pni
+ConditionCPUFeature=sse4_1
+ConditionCPUFeature=sse4_2
+ConditionCPUFeature=ssse3
+# x86-64-v3
+ConditionCPUFeature=avx
+ConditionCPUFeature=avx2
+ConditionCPUFeature=bmi1
+ConditionCPUFeature=bmi2
+ConditionCPUFeature=f16c
+ConditionCPUFeature=fma3
+ConditionCPUFeature=abm
+ConditionCPUFeature=movbe
+ConditionCPUFeature=xsave
+ConditionCPUFeature=osxsave

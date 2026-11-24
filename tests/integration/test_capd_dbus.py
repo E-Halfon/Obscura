@@ -79,10 +79,12 @@ class CapdHarness(dbusmock.DBusTestCase if dbus is not None else unittest.TestCa
         self.systemd_mock.AddMethod("", "Subscribe", "", "", "")
         self.systemd_mock.AddMethod("", "LoadUnit", "s", "o", LOAD_UNIT)
 
-        # Starting point: battery present, camera and virt absent.
+        # Starting point: battery present, everything else absent.
         self.add_target("obscura-cap-battery.target", "active", 1700000000000000)
         self.add_target("obscura-cap-camera.target", "inactive", 0)
         self.add_target("obscura-cap-virt.target", "inactive", 0)
+        self.add_target("obscura-cap-x86-64-v3.target", "inactive", 0)
+        self.add_target("obscura-cap-vulkan-1.3.target", "inactive", 0)
         self.capd = None
         self.watch_lines = None
 
@@ -166,10 +168,12 @@ class CapdHarness(dbusmock.DBusTestCase if dbus is not None else unittest.TestCa
         return sorted(str(path) for path in manager.GetManagedObjects())
 
     def cli_has(self, name):
-        return subprocess.run(
+        """(exit status, stdout) of `obscura-cap has NAME`."""
+        result = subprocess.run(
             [sys.executable, "-P", "-m", "obscura_capd.cli", "has", name],
             env=self.environment(), capture_output=True, text=True, timeout=TIMEOUT,
-        ).returncode
+        )
+        return result.returncode, result.stdout
 
 
 
@@ -179,7 +183,7 @@ class CapdDBusTest(CapdHarness):
         self.start_capd()
         manager = self.manager()
         self.assertEqual(list(manager.List()), ["battery"])
-        self.assertEqual(list(manager.Vocabulary()), ["battery", "camera", "virt"])
+        self.assertEqual(list(manager.Vocabulary()), ["battery", "camera", "virt", "vulkan-1.3", "x86-64-v3"])
         self.assertTrue(manager.Has("battery"))
         self.assertFalse(manager.Has("camera"))
         self.assertEqual(self.managed_paths(), ["/org/obscura/Capabilities1/cap/battery"])
@@ -195,9 +199,9 @@ class CapdDBusTest(CapdHarness):
             self.manager().Has("windows-apps")
         self.assertEqual(caught.exception.get_dbus_name(),
                          "org.obscura.Capabilities1.Error.UnknownCapability")
-        self.assertEqual(self.cli_has("battery"), 0)
-        self.assertEqual(self.cli_has("camera"), 1)
-        self.assertEqual(self.cli_has("nonsense"), 2)
+        self.assertEqual(self.cli_has("battery"), (0, "present\n"))
+        self.assertEqual(self.cli_has("camera"), (1, "absent\n"))
+        self.assertEqual(self.cli_has("nonsense"), (2, ""))
 
     def test_hotplug_signals_once_per_change(self):
         self.start_capd()
@@ -261,6 +265,47 @@ class CapdDBusTest(CapdHarness):
             self.watch_lines.get(timeout=1.0)
         self.assertTrue(self.manager().Has("battery"))
         self.assertIsNone(self.capd.poll(), "capd must keep running")
+
+    def test_hyphenated_name_gets_an_escaped_path(self):
+        self.set_target("obscura-cap-x86-64-v3.target", "active", 9, announce=False)
+        self.start_capd()
+        self.assertTrue(self.manager().Has("x86-64-v3"))
+        path = "/org/obscura/Capabilities1/cap/x86_2d64_2dv3"
+        self.assertIn(path, self.managed_paths())
+        properties = dbus.Interface(self.system_bus.get_object(BUS_NAME, path),
+                                    dbus.PROPERTIES_IFACE).GetAll(CAPABILITY_INTERFACE)
+        self.assertEqual(properties["Name"], "x86-64-v3")
+        self.assertEqual(properties["Kind"], "static")
+
+    def test_dotted_name_appears_and_disappears(self):
+        """capd's half of unplugging the last qualifying GPU: when the target stops, Removed
+        is emitted and Has() turns false, with no restart."""
+        self.start_capd()
+        self.start_watch()
+        self.assertEqual(self.next_watch_line(), "+battery")
+        path = "/org/obscura/Capabilities1/cap/vulkan_2d1_2e3"
+
+        self.set_target("obscura-cap-vulkan-1.3.target", "active", 1700000000000002)
+        self.assertEqual(self.next_watch_line(), "+vulkan-1.3")
+        self.assertTrue(self.manager().Has("vulkan-1.3"))
+        self.assertIn("vulkan-1.3", list(self.manager().List()))
+        self.assertIn(path, self.managed_paths())
+        properties = dbus.Interface(self.system_bus.get_object(BUS_NAME, path),
+                                    dbus.PROPERTIES_IFACE).GetAll(CAPABILITY_INTERFACE)
+        self.assertEqual(properties["Name"], "vulkan-1.3")
+
+        self.set_target("obscura-cap-vulkan-1.3.target", "inactive")
+        self.assertEqual(self.next_watch_line(), "-vulkan-1.3")
+        self.assertFalse(self.manager().Has("vulkan-1.3"))
+        self.assertNotIn(path, self.managed_paths())
+        self.assertIsNone(self.capd.poll(), "capd must keep running")
+
+        # Each transition is in capd's log, so the VM tests can check a boot after the fact.
+        self.stop_process(self.capd)
+        output = self.capd.stdout.read()
+        for transition in ("added", "removed"):
+            self.assertTrue(any("OBSCURA_CAPABILITY=vulkan-1.3" in line and "OBSCURA_TRANSITION=" + transition in line
+                                for line in output.splitlines()), output)
 
     def test_failed_target_is_absent(self):
         self.set_target("obscura-cap-camera.target", "failed", announce=False)

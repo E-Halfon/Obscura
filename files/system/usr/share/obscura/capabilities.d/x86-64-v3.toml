@@ -1,0 +1,12 @@
+# Camera Obscura capability declaration (ARCHITECTURE.md §4, vocabulary in PACKS.md §2).
+# Present while obscura-cap-x86-64-v3.target is active; absent otherwise.
+# Detected at boot by ConditionCPUFeature= lines on the target (the x86-64 psABI v2 and v3
+# feature sets); sysinit.target pulls the target in, and the conditions gate it.
+
+[capability]
+name    = "x86-64-v3"
+api     = 1
+kind    = "static"
+target  = "obscura-cap-x86-64-v3.target"
+summary = "An x86-64-v3 CPU (AVX2, BMI2, FMA)"
+attachable = false   # a CPU feature; nothing can be connected to add it

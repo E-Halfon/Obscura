@@ -327,7 +327,8 @@ accept drift. Shipping beats purity.
 |---|---|---|---|
 | 0.1 | **Universal-image skeleton:** BlueBuild recipe on Universal Blue Aurora (`stable`), signed image builds, boots on the desktop | — | 3 |
 | 0.2 | **Capability module framework** (udev → systemd → DBus) — ✅ **done** (PR #2, 2026-11-22; open VM tests tracked in §7, "Stage 0 — capability framework") | 0.1 | 3 |
-| 0.2b | **Static capabilities:** `x86-64-v3` and `vulkan-1.3` (notes below the table). Needed for `pack-wine` to reach Ready | 0.2 | 2 |
+| 0.2b | **Static capabilities:** `x86-64-v3` and `vulkan-1.3` (notes below the table). Needed for `pack-wine` to reach Ready — ✅ **done** (PR #5, 2026-11-24; open items in §7, "Stage 0 — static capabilities") | 0.2 | 2 |
+| 0.2c | **`camera` counts hardware only** (hardening: a streaming v4l2loopback node must not count; notes below the table) | 0.2 | 1 |
 | 0.3 | **KDE Plasma shell:** strip, theme, Windows-style layout | 0.1 | 2 |
 | 0.4 | Wine + binfmt_misc dispatch, `.exe` → window — **delivered as `pack-wine`** | 0.3, 0.21 | 3 |
 | 0.5 | Wine sandbox: bubblewrap, no-network default | 0.4 | 2 |
@@ -361,18 +362,22 @@ accept drift. Shipping beats purity.
 
 **0.2b notes.** The two capabilities need different mechanisms.
 
-- **`x86-64-v3` is a fixed CPU fact.** Try pure systemd conditions first: one
-  `ConditionCPUFeature=` line per v3 feature (avx, avx2, bmi1, bmi2, f16c, fma,
-  lzcnt/abm, movbe, xsave/osxsave). systemd ANDs repeated conditions together, so no
-  oneshot service is needed.
-  - **Check first:** which flag names `ConditionCPUFeature=` accepts (e.g. whether LZCNT
-    is `abm`), whether every v3 feature is in its table, and that Aurora's systemd
-    supports it.
-  - **Starting the target.** A condition only gates a start, so something still has to
-    start the target. The proposal is a static `multi-user.target.wants/` symlink for
-    **static** targets only. The target file itself still has no `[Install]`.
-    `tests/unit/test_repo_consistency.py` gains a rule that only static targets may be
-    wanted this way.
+- **`x86-64-v3` is a fixed CPU fact.** Pure systemd conditions: one
+  `ConditionCPUFeature=` line per psABI v2 and v3 feature. systemd ANDs repeated
+  conditions together, so no oneshot service is needed.
+  - **Checked:** Aurora stable is Fedora 45 with systemd 262.1 (262.1-1.fc45). Its CPUID table
+    (`src/basic/virt.c`) has every name used: v2 `cx16 lahf_lm popcnt pni sse4_1 sse4_2
+    ssse3`, v3 `avx avx2 bmi1 bmi2 f16c fma3 abm movbe xsave osxsave`. **FMA is `fma3`**
+    and LZCNT is `abm`. A misspelled name fails silently (the capability would read absent
+    everywhere), so capd-tests evaluates every line with `systemd-analyze condition` on
+    the runner's x86-64-v3 CPU and requires all true.
+  - **Starting the target.** A condition only gates a start, so `sysinit.target` wants
+    each **static** target through a drop-in
+    (`sysinit.target.d/50-obscura-static-capabilities.conf`), not a `.wants/` symlink: the
+    repo can't carry symlinks on Windows checkouts (`core.symlinks=false`). The target has
+    no `[Install]`, is explicitly `Before=sysinit.target` (with `DefaultDependencies=no`),
+    and `obscura-capd` is `After=` it, so capd never reads it before its start job ran.
+    Lints keep the drop-in to static targets only and check both orderings.
   - A failed condition leaves the target inactive (absent, nothing failed).
 - **`vulkan-1.3` depends on the graphics driver**, so it can't be a systemd condition. It
   needs a probe after the GPU's DRM render node appears.
@@ -387,23 +392,74 @@ accept drift. Shipping beats purity.
     still satisfies dependents, and an `ExecStart` failure shows in `systemctl
     --failed`); re-probe on GPU add and remove; no Vulkan initialisation inside a udev
     worker.
-  - **Kind and attachable:** pick the kind that fits the mechanism (it may end up as
-    `probe` or `device`). Readiness no longer depends on the kind: both declarations set
-    `attachable = false`, so an absence is "Insufficient hardware", never "connect a
-    device".
-- **Capability names with dots.** `vulkan-1.3` (like any `x.y` version name) can't be
-  declared yet. capd's `NAME_PATTERN` allows only `[a-z0-9-]`, and its object-path
-  mapping (hyphen → underscore) has no encoding for `.`. 0.2b widens the pattern and
-  picks a one-to-one escaping for object paths (e.g. systemd-style `_2e` for `.` and
-  `_2d` for `-`; the current "hyphen → underscore" mapping can't take a second
-  character). Pack manifests already accept dotted names (task 0.21).
-- **Tests:**
-  - CI: the acceptance rule against recorded `vulkaninfo --json` fixtures (lavapipe
-    only; lavapipe + RADV; VMware SVGA; discrete + integrated), and a lint that every v3
-    feature condition is present.
-  - VM: `vulkan-1.3` is **absent** although lavapipe reports 1.3 (the key negative
-    test), and `x86-64-v3` is present exactly when `/proc/cpuinfo` has the v3 flags.
-  - Desktop: both present.
+  - **Kind and attachable:** `device` (it follows GPU hotplug). Readiness no longer
+    depends on the kind: both declarations set `attachable = false`, so an absence is
+    "Insufficient hardware", never "connect a device".
+  - **Implemented as:** udev starts `obscura-cap-vulkan-1.3-probe@<renderDN>.service` per
+    render node. The probe (`obscura_capd.vulkan_probe`) runs as `ExecCondition=`; the unit
+    is `BindsTo=` the node's device, `Before=` and `Upholds=` the target. **The gate:**
+    `Upholds=` pulls the target in like `Wants=` whenever a probe *starts*, so a bare
+    Upholds made `vulkan-1.3` active in the VM although the probe rejected lavapipe (6 s at
+    boot, then an hour, most likely after C-13 started and cancelled a probe for a
+    nonexistent node: the journal's second resolution can't separate it from the restart
+    in the same second; VM pass of 2026-11-23). Now only an accepting probe's `ExecStart=` writes
+    `/run/obscura-cap/vulkan-1.3/<renderDN>/accepted`, inside its `RuntimeDirectory=`
+    (removed whenever the probe goes inactive), and the target carries
+    `ConditionPathExistsGlob=/run/obscura-cap/vulkan-1.3/*/accepted`. `Before=` makes the
+    target's start job wait for the probe's decision, so a rejected or skipped probe never
+    makes the target active, not even briefly. A node counts only if a device in
+    `vulkaninfo --json` has `VkPhysicalDeviceDrmPropertiesEXT` for that node (no struct, no
+    count; no fallback), is an integrated or discrete GPU, has its own `apiVersion ≥ 1.3`,
+    has a driver that isn't llvmpipe/lavapipe/SwiftShader or layered over a host API
+    (Venus, Dozen: Venus can pass the host GPU's type through), and the node's kernel driver
+    isn't a virtual GPU (virtio_gpu, vmwgfx, vkms, vgem). The probe fails closed: missing
+    vulkaninfo, a failing `--summary`, or an unreadable node means absent; a crash, signal,
+    non-zero exit, timeout (10 s per call) or bad JSON for one device means that device
+    doesn't count; past 45 s overall no further devices are read. Every reason is logged. It runs with capd's
+    hardening plus `DynamicUser=`, the render group, `DevicePolicy=closed` and
+    `DeviceAllow=char-drm`. vulkan-tools is added to the recipe (Aurora ships only
+    mesa-vulkan-drivers).
+- **Capability names with dots.** capd's `NAME_PATTERN` now accepts dots (the same rule
+  as pack manifests), and object paths escape every byte outside `[a-z0-9]` as `_xx`,
+  systemd-style: `vulkan-1.3` → `vulkan_2d1_2e3`, `x86-64-v3` → `x86_2d64_2dv3`.
+- **Tests:** §7, "Stage 0 — static capabilities (task 0.2b)".
+
+**0.2c notes: `camera` counts hardware only.** A hardening task: nothing fails today.
+Aurora ships v4l2loopback ("OBS Virtual Camera", `/dev/video0` under
+`/sys/devices/virtual/`). Idle, its node is output-only
+(`ID_V4L_CAPABILITIES=:video_output:`, no `systemd` tag, no `SYSTEMD_WANTS`), so
+`70-obscura-cap-camera.rules` doesn't match it and `camera` stays absent. The 0.2b VM pass
+confirmed this (2026-11-24): with the webcam disconnected, `obscura-cap-camera.target`
+was inactive and `has camera` printed absent. But with `exclusive_caps`, v4l2loopback
+switches the node to `:capture:` while a producer streams into it, and the rule also runs
+on `change` events. So a running OBS virtual camera would make `camera` present with no
+camera attached. After 0.2c the rule counts a node only if all of these hold:
+- it has the capture capability (`:capture:`);
+- its device path has no `/devices/virtual/` parent;
+- its driver isn't `v4l2loopback` or `vivid` (excluded by name, as a second line of
+  defence);
+- it isn't a metadata-only node (UVC's second node per camera, `:meta:` without
+  `:capture:`).
+
+Tests:
+- a udev-rule lint;
+- `udevadm test`-style unit tests with recorded property sets: a UVC capture node, its
+  metadata node, v4l2loopback in both `exclusive_caps` modes (idle and streaming), and
+  vivid;
+- VM test C-1 with the OBS virtual camera **running**, which needs `camera` absent. C-1
+  compares against the same ground truth as the rule (§7);
+- C-3: the webcam still counts.
+
+**Open decision: the OS updater.** Universal Blue's `uupd` updates the image, Flatpaks,
+brew and distrobox on a timer. Obscura's updates must follow its no-surprises policy: one
+updater for OS and packs, never a forced restart mid-work, and "Undo last update"
+(ARCHITECTURE.md §19 table; pack updates and pins in §17–§18.1). uupd works outside that
+policy, and on the 0.2b branch image it already failed a run on a Flatpak user update
+("system operation Deploy not allowed for user", upstream). Decide whether Obscura keeps
+uupd (configured to stage only, behind the pack manager's update UI) or replaces it with
+its own updater (pack manager + bootc image updates). Decide before work on the pack
+manager's update path starts. Until then, test VMs disable `uupd.timer`, and the VM test
+scripts warn when it is enabled.
 
 **0.22 note: readiness runs in the user's session.** Readiness is per user, because the
 user-supplied files are in `~`. The evaluation therefore runs in the user's session, as a
@@ -533,6 +589,12 @@ VMware Workstation). The C-tests are defined in `tests/vm/capabilities.sh` and
 T-50 (one USB stick boots all three devices with correct capabilities and no failed units)
 also remains open until the hardware exists.
 
+**C-1's camera check uses ground truth.** C-1 doesn't assume there is no camera. `camera`
+must be present if and only if some `/dev/video*` node has `:capture:` in
+`ID_V4L_CAPABILITIES` and isn't under `/sys/devices/virtual`, and the script prints the
+matching nodes. The 0.2b VM pass failed C-1 because the C920 was connected, not because of
+v4l2loopback.
+
 ### Stage 0 — pack format (task 0.21)
 
 Defined in `tests/vm/packs.sh` and `tests/vm/README.md`. The unit and integration tests
@@ -549,6 +611,89 @@ run in CI (`capd-tests`).
 | P-7 | Malformed manifest | Skipped with one reported problem; no traceback, no failed units |
 
 P-1…P-7 cover the user-files half of T-70. Its Neo half stays open until 0.28.
+
+### Stage 0 — static capabilities (task 0.2b)
+
+CI (`capd-tests`): the acceptance rule against `tests/fixtures/vulkan/` (synthetic
+scenarios for each branch; real recordings only for acceptance), the probe's fail-closed
+cases, `systemd-analyze condition` for every x86-64-v3 line on the runner, the
+probed-capability gate on the runner's real systemd (`tests/ci/upholds-gate.sh`: for each
+of 20 rejecting probe starts, PID 1's journal logs the stand-in target's start job as
+skipped by its condition and never as a real "Reached target"; a control run without the
+gate must show a real "Reached target", the old bug), and lints for the units. CI runs
+systemd 255 (Ubuntu 24.04), the image 262. The `gate-on-image` job (`build.yml`, after the
+image build) runs the same script inside the built image with systemd 262 as PID 1 and the
+image's installed units (checked identical to the repo's), and exports PID 1's
+finished-start-job entries as an artifact. The VM tests also cover 262.
+
+**How "never active" is proven** (`tests/lib/gate-checks.sh`, used by CI and the VM tests).
+The primary proof is the journal. A condition-skipped start job finishes as `done` and
+carries the same `MESSAGE_ID` as a real start (`39f53479…`), so the verdict is decided by
+the text: a real start is identified positively ("Reached target <unit>"), a skip by the
+condition-check wording, which changed between versions (255: "was skipped because of an
+unmet condition check (…)", 262: "skipped, unmet condition check …"), and any other
+finished start job counts as "unknown", a failure, so a new wording can't pass silently or
+read as a start (classifier `tests/lib/journal_verdict.py`, tested against recorded
+entries). The first version only knew the 255 wording and failed the 262 VM pass of
+2026-11-24 on every skip. Properties
+(`ActiveEnterTimestamp` 0, `ConditionResult`, `Result`) are secondary and only checked
+while the unit is known to have stayed loaded: PID 1 garbage-collects an unreferenced
+inactive unit, and a reloaded one reads as never active (CI diagnostic run, 2026-11-24).
+The tests pin units with `Manager.RefUnit` and check the pin held (the probe's
+`InvocationID` matches the journal, the target's `ConditionTimestamp` advanced) before
+reading properties. Debug-level messages ("changed dead -> active", "Collecting.") are
+used only in `--debug` diagnostic runs, never for a verdict. VM tests are in `tests/vm/capabilities.sh` (C-9 was already bus-policy, so these
+start at C-10).
+
+| ID | Test | Pass condition |
+|---|---|---|
+| C-10 | x86-64-v3 on the VM | Present exactly when `/proc/cpuinfo` has the v2+v3 flags; every condition line agrees with its flag; glibc's `ld.so` agrees; nothing failed |
+| C-11 | Boot ordering | capd starts only after the x86-64-v3 target's conditions ran |
+| **C-12** | **lavapipe doesn't count** | lavapipe reports Vulkan ≥ 1.3, yet `vulkan-1.3` is absent, and never was this boot: this boot's journal (by boot ID) logs at least one start of the target, every one skipped by its condition and none a real "Reached target", and capd never announced it (`ActiveEnterTimestamp` 0 is reported as a secondary note); each render-node probe is skipped (`exec-condition`) with a logged reason and no accept marker; no failed units. The same run records `real-vmware-lavapipe-*` with `capture.py`; the CI negative test reads only that recording (committed 2026-11-24) |
+| C-13 | Can't be faked | Manual start of the target refused; for each of 20 restarts of each probe, the journal logs the target's start job as skipped by its condition and never a real "Reached target"; with the units pinned, the properties agree (`ConditionResult=no`, never active); `obscura-cap watch` sees no `+vulkan-1.3`; a probe for a nonexistent node never runs, and the target's start job waits behind it instead of starting |
+| C-14 | Unplug, no reboot (mechanism) | A stand-in of the probe and target (`tests/lib/stand-in.sh`), bound to the webcam, writes its marker and activates the target, then stops within 5 s of unplugging, marker gone |
+| P-2 | pack-wine on the VM (after 0.2b) | Insufficient hardware, `vulkan-1.3` absent rather than unknown |
+| D-1 | Desktop: both present | `x86-64-v3` and `vulkan-1.3` present; pack-wine Ready |
+| D-2 | Desktop: recordings | `capture.py` recordings of the real GPUs committed as `real-*` |
+| **D-3** | **Desktop: unplug the last qualifying GPU** | Over ssh, remove each qualifying GPU (`echo 1 > /sys/bus/pci/devices/<BDF>/remove`): `vulkan-1.3` absent within 5 s, `Removed` emitted, nothing failed; `echo 1 > /sys/bus/pci/rescan` brings it back |
+
+**Result (2026-11-24).** Task 0.2b passed on the branch image, built from `bd4b960` and
+run in VMware Workstation:
+- `capabilities.sh all` (C-1 and C-5 to C-13): 0 failures, with the webcam disconnected;
+- C-14 `unplug`: the stand-in wrote its marker and its target was upheld; disconnecting
+  stopped the target in ~0 ms; `BindsTo=` stopped the probe and removed its marker; no
+  failed units;
+- P-2 `packs.sh wine`: insufficient-hardware, reason capability-absent.
+
+CI was green on that commit: `capd-tests`, and `bluebuild` including `gate-on-image` on
+systemd 262.
+
+**Open items** (they stay open after 0.2b is marked done):
+- **vulkan-1.3 present on real recordings** (RADV/ANV, discrete + integrated). Synthetic
+  fixtures don't count. Open until D-2 records them with `capture.py` (a Fedora live USB
+  works); until then `test_present_on_real_hardware` skips. If a real recording on
+  Aurora's vulkan-tools lacks `VkPhysicalDeviceDrmPropertiesEXT` for a GPU that should have
+  it, stop: the design depends on it and has no fallback.
+- **NVIDIA's proprietary driver** needs `/dev/nvidiactl` and `/dev/nvidia*`, which the
+  probe's `DeviceAllow=char-drm` blocks, so it reads absent (fails safe). NVK needs only
+  DRM. Decide when the desktop GPU is chosen: allow `char-nvidia*`, or require NVK.
+- **D-1 to D-3** need the desktop (with T-50).
+- **Task 0.2c:** `camera` must not count a streaming v4l2loopback node (§6, 0.2c notes).
+- **The OS-updater decision** (§6, "Open decision: the OS updater"). Until it's made,
+  test VMs disable `uupd.timer`.
+- **CI and image systemd versions differ:** the runner has 255 (Ubuntu 24.04) and the
+  image 262. `upholds-gate.sh` runs on both: on the runner in `capd-tests`, and in the
+  image in `gate-on-image`. When the image moves to a new systemd, check
+  `gate-on-image`, and the classifier if PID 1's skip wording changed. Unknown wordings
+  fail the run. Branch protection should require `gate-on-image`; that's a repo setting.
+- **Known edge cases, accepted:** the target waits for the slowest pending probe, so a
+  hung second GPU can delay `vulkan-1.3` by up to the probe's `TimeoutStartSec=` (90 s); a
+  GPU stuck in uninterruptible sleep, or a failing `touch` of the marker, shows as a failed
+  probe unit (visible, and the capability stays absent); more than 5 probe starts of one
+  node within 10 s (rapid replugs) hit systemd's default start limit and leave that probe
+  `start-limit-hit` (failed, absent) until the next replug after the window; with
+  `clearcpuid=`/an XCR0 that disables AVX, systemd's `ConditionCPUFeature=` and glibc
+  can disagree (`osxsave` covers the usual case).
 
 ### Stage 0 — telephony
 
