@@ -88,8 +88,23 @@ jobs:
           sudo podman pull -q "${{ steps.image.outputs.ref }}"
           sudo podman run -d --name gate --privileged --systemd=always \
             -v "$PWD:/work:ro" "${{ steps.image.outputs.ref }}" /sbin/init
-          state=$(sudo timeout 180 podman exec gate systemctl is-system-running --wait || true)
-          echo "system state: $state"
+          # is-system-running --wait needs PID 1's bus, which doesn't exist for the first
+          # moments after the container starts; wait for the bus first, then for boot.
+          state=""
+          for _ in $(seq 1 90); do
+            state=$(sudo podman exec gate systemctl is-system-running 2>/dev/null || true)
+            if [ -n "$state" ]; then
+              break
+            fi
+            sleep 2
+          done
+          if [ -n "$state" ]; then
+            state=$(sudo timeout 180 podman exec gate systemctl is-system-running --wait || true)
+          fi
+          echo "system state: ${state:-no bus after 180 s}"
+          if [ -z "$state" ]; then
+            sudo podman logs --tail 50 gate || true
+          fi
           sudo podman exec gate systemctl --version | head -n 1
           sudo podman exec gate systemctl --failed --no-pager || true
           case "$state" in
