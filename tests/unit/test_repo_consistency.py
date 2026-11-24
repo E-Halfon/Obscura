@@ -139,10 +139,53 @@ class ConsistencyTest(unittest.TestCase):
                 self.assertEqual(directive_values(text, "Type"), ["oneshot"])
                 self.assertEqual(directive_values(text, "RemainAfterExit"), ["yes"])
                 self.assertTrue(directive_values(text, "ExecCondition"), "detection runs as ExecCondition=")
-                # The only ExecStart is a no-op: a failing ExecStart would show as a failed unit.
-                self.assertEqual(directive_values(text, "ExecStart"), ["/usr/bin/true"])
                 self.assertEqual(directive_values(text, "ExecStartPre"), [])
                 self.assertEqual(directive_values(text, "ExecStartPost"), [])
+
+    def test_probe_templates_gate_their_target(self):
+        """The accept-marker gate (task 0.2b, VM pass of 2026-11-23). Upholds= pulls the
+        target in like Wants= as soon as the probe starts, so:
+        - only ExecStart= (which runs after ExecCondition= passed) writes the marker,
+          inside the probe's RuntimeDirectory=, which systemd removes when it goes inactive;
+        - the probe is Before= its target, so the target's start job waits for the decision;
+        - the target is gated by ConditionPathExistsGlob= on the markers."""
+        for path in glob.glob(os.path.join(UNIT_DIR, "obscura-cap-*-probe@.service")):
+            name = os.path.basename(path)[len("obscura-cap-"):-len("-probe@.service")]
+            with self.subTest(name):
+                text = read(path)
+                target = self.vocabulary[name].target
+                before = directive_values(text, "Before")
+                self.assertIn(target, before)
+                self.assertEqual([unit for unit in before if TARGET_PATTERN.fullmatch(unit)], [target],
+                                 "Before= names its own capability target and no other")
+                self.assertEqual(directive_values(text, "RuntimeDirectory"), ["obscura-cap/" + name + "/%i"])
+                self.assertIn(directive_values(text, "RuntimeDirectoryPreserve"), ([], ["no"]))
+                self.assertEqual(directive_values(text, "ExecStart"),
+                                 ["/usr/bin/touch", "/run/obscura-cap/" + name + "/%i/accepted"])
+                target_text = read(os.path.join(UNIT_DIR, target))
+                self.assertEqual(directive_values(target_text, "ConditionPathExistsGlob"),
+                                 ["/run/obscura-cap/" + name + "/*/accepted"])
+
+    def test_every_upheld_target_is_gated(self):
+        """No capability target may be upheld without the accept-marker condition: a bare
+        Upholds= plus ExecCondition= made vulkan-1.3 present in the VM."""
+        pattern = re.compile(r"^\s*Upholds\s*=\s*(.*)$", re.MULTILINE)
+        for path in glob.glob(os.path.join(REPO_ROOT, "files", "**", "*.*"), recursive=True):
+            if not path.endswith((".service", ".target", ".conf")):
+                continue
+            for match in pattern.finditer(read(path)):
+                for target in TARGET_PATTERN.findall(match.group(1)):
+                    with self.subTest(path=path, target=target):
+                        name = target[len("obscura-cap-"):-len(".target")]
+                        self.assertEqual(directive_values(read(os.path.join(UNIT_DIR, target)), "ConditionPathExistsGlob"),
+                                         ["/run/obscura-cap/" + name + "/*/accepted"])
+
+    def test_capd_never_reads_accept_markers(self):
+        """The marker is read only by PID 1's condition; capd mirrors the target."""
+        package = os.path.join(REPO_ROOT, "files", "system", "usr", "lib", "obscura", "python", "obscura_capd")
+        for path in glob.glob(os.path.join(package, "*.py")):
+            with self.subTest(os.path.basename(path)):
+                self.assertNotIn("/run/obscura-cap", read(path))
 
     def test_probe_hardening_matches_capd(self):
         """The probe keeps every hardening directive of obscura-capd.service, except for the

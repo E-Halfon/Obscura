@@ -2,7 +2,7 @@
 
 **Status:** Stage 0 in progress
 **Version:** 3.1
-**Last updated:** 2026-11-21
+**Last updated:** 2026-11-23
 **Companion documents:** CAMERA-OBSCURA-BUILD-BRIEF.md (plan), PACKS.md (pack catalog)
 
 > **If you are an AI assistant reading this at the start of a session:** this document is
@@ -178,10 +178,16 @@ it inactive. The target is ordered before `sysinit.target` and capd after it, so
 never sees a static target that hasn't been evaluated yet. A **probed** device capability
 is one udev can't decide by itself, because the answer depends on a driver (`vulkan-1.3`).
 udev starts a probe unit per device instead of the target. The probe runs its check as
-`ExecCondition=`: when the check passes, the probe is active and `Upholds=` the target;
-when it doesn't (or the check itself fails), systemd skips the probe and nothing is
-failed. The probe is `BindsTo=` its device, so removing the last qualifying device stops
-the target through `StopWhenUnneeded`, with no reboot.
+`ExecCondition=`; only an accepting probe's `ExecStart=` writes
+`/run/obscura-cap/<name>/<dev>/accepted`, in its `RuntimeDirectory=`, which systemd removes
+whenever the probe goes inactive. The probe is `Before=` and `Upholds=` the target, and the
+target is gated by `ConditionPathExistsGlob=` on those markers, so a rejecting probe can
+never make it active, not even briefly: `Upholds=` pulls the target in like `Wants=`
+whenever a probe starts, and `Before=` makes that start wait for the probe's decision. When
+the check fails (or can't run), systemd skips the probe and nothing is failed. The marker
+is read only by that condition; capd mirrors the target, as for every capability. The
+probe is `BindsTo=` its device, so removing the last qualifying device stops the target
+through `StopWhenUnneeded`, with no reboot.
 
 **One universal image.** Capabilities are detected at **runtime**, never composed at
 build time. Per-host composition (e.g. one NixOS flake per device) fails the flash-drive
@@ -729,15 +735,22 @@ stays inside portable devices (small, ~1 W); the Switch belongs in a home coproc
     start job ran
   - where udev can't decide presence (`vulkan-1.3`), udev starts a per-device **probe**
     unit (`obscura-cap-<name>-probe@<dev>.service`). The probe runs as `ExecCondition=`,
-    is `BindsTo=` its device, and `Upholds=` its own target while active. This is the only
-    exception, besides the static drop-in, to "nothing pulls in a capability". A skipped
-    probe upholds nothing, so absence is never a failed unit, and unplugging the last
-    qualifying device stops the target without a reboot
+    is `BindsTo=` its device, and is `Before=` and `Upholds=` its own target. This is the
+    only exception, besides the static drop-in, to "nothing pulls in a capability", and it
+    is **gated**: only an accepting probe writes `/run/obscura-cap/<name>/<dev>/accepted`
+    (its `RuntimeDirectory=`), and the target has `ConditionPathExistsGlob=` on those
+    markers. A bare `Upholds=` plus `ExecCondition=` was rejected: Upholds pulls the target
+    in like Wants as soon as the probe starts, so `vulkan-1.3` became active in the VM
+    before the probe rejected lavapipe (VM pass, 2026-11-23). A rejecting probe never makes
+    the target active, absence is never a failed unit, the marker is never a source of
+    truth for capd, and unplugging the last qualifying device stops the target without a
+    reboot
   - `vulkan-1.3` means **hardware-accelerated** Vulkan 1.3: a device matched to the render
     node through `VK_EXT_physical_device_drm` (no DRM properties, no count), type
     integrated or discrete GPU, its own `apiVersion` ≥ 1.3. CPU (llvmpipe/lavapipe),
-    `VIRTUAL_GPU` (VMware SVGA, virtio-gpu/venus) and `OTHER` never count. The probe fails
-    closed
+    `VIRTUAL_GPU` (VMware SVGA, virtio-gpu/venus) and `OTHER` never count, nor do drivers
+    layered over a host API (Venus, Dozen, whatever type they report) or render nodes of
+    virtual-GPU kernel drivers (virtio_gpu, vmwgfx, vkms, vgem). The probe fails closed
   - capability names may contain dots; object paths escape every byte outside `[a-z0-9]`
     as `_xx` (`vulkan-1.3` → `vulkan_2d1_2e3`)
 - **GUI-first: no normal task requires a terminal (§19)**

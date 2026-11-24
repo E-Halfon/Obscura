@@ -2,7 +2,10 @@ name: capd-tests
 # Unit, consistency, and DBus integration tests for the capability service (task 0.2)
 # and the pack format (task 0.21). Integration tests run obscura-capd against a mock
 # systemd on a private bus; the pack tests run obscura-pack against that capd. Task 0.2b
-# adds a check of the x86-64-v3 CPU conditions against the runner's real CPU.
+# adds a check of the x86-64-v3 CPU conditions against the runner's real CPU, and of the
+# probed-capability gate against the runner's real systemd (PID 1).
+# Every check after "Run tests" runs even when that step failed (if: !cancelled()), so one
+# red unit test can't hide the others.
 on:
   push:
     paths:
@@ -31,12 +34,13 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            python3-dasbus python3-gi python3-dbus python3-dbusmock dbus
+            python3-dasbus python3-gi python3-dbus python3-dbusmock dbus shellcheck
       - name: Run tests
         env:
           PYTHONDONTWRITEBYTECODE: "1"
         run: /usr/bin/python3 -m unittest discover -s tests -t . -v
       - name: x86-64-v3 conditions hold on a real x86-64-v3 CPU
+        if: ${{ !cancelled() }}
         # A misspelled ConditionCPUFeature= name fails silently (the capability would read
         # absent everywhere), so evaluate every line with systemd itself. The runner's CPU
         # must support x86-64-v3, or this check proves nothing; glibc's loader says so.
@@ -64,7 +68,22 @@ jobs:
             fi
           done <<< "$lines"
           exit "$failed"
+      - name: Probed-capability gate on a real systemd
+        # A rejecting probe must never make its target active (task 0.2b). Includes a
+        # control run without the gate that must show the old bug on this systemd.
+        if: ${{ !cancelled() }}
+        run: sudo bash tests/ci/upholds-gate.sh
+      - name: Shell scripts parse and pass shellcheck
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          for script in tests/vm/*.sh tests/ci/*.sh tests/lib/*.sh; do
+            bash -n "$script"
+          done
+          shellcheck --version | head -n 2
+          shellcheck -x --severity=warning tests/vm/*.sh tests/ci/*.sh tests/lib/*.sh
       - name: Fail if integration tests were skipped
+        if: ${{ !cancelled() }}
         env:
           PYTHONDONTWRITEBYTECODE: "1"
         run: |

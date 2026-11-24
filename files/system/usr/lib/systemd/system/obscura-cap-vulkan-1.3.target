@@ -1,15 +1,24 @@
 # Camera Obscura capability: vulkan-1.3 (ARCHITECTURE.md §4).
 # Active = present, inactive = absent. Never "failed".
-# Upheld only by an active obscura-cap-vulkan-1.3-probe@<renderDN>.service, which udev
-# (70-obscura-cap-vulkan-1.3.rules) starts per render node and which becomes active only
-# when that node has a hardware-accelerated Vulkan 1.3 device. When the last such probe
-# stops (its GPU went away; BindsTo= on the device), nothing upholds this target and
-# StopWhenUnneeded stops it, without a reboot. Manual start and stop are refused so the
-# state can't be faked. Units that belong to this capability use PartOf= and WantedBy=
-# this target and must never Requires= or Wants= it.
+# udev (70-obscura-cap-vulkan-1.3.rules) starts obscura-cap-vulkan-1.3-probe@<renderDN>.service
+# per render node. Each probe is Before= and Upholds= this target, so every start of a probe
+# also queues a start of this target, which runs only after the probe has decided.
+#
+# The condition below is the gate. Only an accepting probe writes
+# /run/obscura-cap/vulkan-1.3/<renderDN>/accepted (its RuntimeDirectory=, removed when the
+# probe stops or is skipped). A start of this target while no probe has accepted fails the
+# condition: the target never enters "active", not even for an instant. Upholds= alone
+# isn't enough: it pulls the target in like Wants= as soon as a probe starts (task 0.2b,
+# VM pass of 2026-11-23). The marker is read only by this condition; capd never reads it.
+#
+# When the last accepting probe stops (its GPU went away; BindsTo= on the device), nothing
+# upholds this target and StopWhenUnneeded stops it, without a reboot. Manual start and
+# stop are refused so the state can't be faked. Units that belong to this capability use
+# PartOf= and WantedBy= this target and must never Requires= or Wants= it.
 [Unit]
 Description=Obscura capability: Hardware-accelerated Vulkan 1.3 on an integrated or discrete GPU
 Documentation=file:/usr/share/obscura/capabilities.d/vulkan-1.3.toml
 StopWhenUnneeded=yes
 RefuseManualStart=yes
 RefuseManualStop=yes
+ConditionPathExistsGlob=/run/obscura-cap/vulkan-1.3/*/accepted
