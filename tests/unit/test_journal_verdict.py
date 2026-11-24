@@ -1,4 +1,4 @@
-"""tests/lib/journal_verdict.py against PID 1 entries recorded on systemd 255 (task 0.2b).
+"""tests/lib/journal_verdict.py against PID 1 entries recorded on systemd 255 and 262 (task 0.2b).
 
 A condition-skipped start job and a real one carry the same MESSAGE_ID, JOB_TYPE and
 JOB_RESULT; the classifier must tell them apart by text, or the gate tests read every
@@ -62,10 +62,11 @@ class ClassifyTest(unittest.TestCase):
         base.update(fields)
         return base
 
-    def test_failed_or_other_jobs_are_not_verdicts(self):
-        self.assertIsNone(journal_verdict.classify(self.entry(JOB_RESULT="failed"), "t.target"))
-        self.assertIsNone(journal_verdict.classify(self.entry(JOB_TYPE="stop"), "t.target"))
-        self.assertIsNone(journal_verdict.classify(self.entry(MESSAGE_ID="other"), "t.target"))
+    def test_other_jobs_are_not_verdicts(self):
+        other = "Stopped target t.target."
+        self.assertIsNone(journal_verdict.classify(self.entry(JOB_TYPE="stop", MESSAGE=other), "t.target"))
+        self.assertIsNone(journal_verdict.classify(self.entry(JOB_RESULT="failed", MESSAGE=other), "t.target"))
+        self.assertIsNone(journal_verdict.classify(self.entry(MESSAGE_ID="other", MESSAGE=other), "t.target"))
 
     def test_both_skip_wordings(self):
         for text in ("t.target - T was skipped because of an unmet condition check (X=y).",
@@ -73,6 +74,33 @@ class ClassifyTest(unittest.TestCase):
                      "Condition check resulted in t.target - T being skipped."):
             with self.subTest(text):
                 self.assertEqual(journal_verdict.classify(self.entry(MESSAGE=text), "t.target"), "skipped")
+
+    def test_262_skip_wording(self):
+        # Transcribed from the VM pass on systemd 262.1-1.fc45 (2026-11-24, 85 such entries);
+        # the recorded 262 entries from gate-on-image join gate-systemd-255.jsonl later.
+        text = ("obscura-cap-vulkan-1.3.target - Obscura capability: Hardware-accelerated Vulkan 1.3 "
+                "on an integrated or discrete GPU skipped, unmet condition check "
+                "ConditionPathExistsGlob=/run/obscura-cap/vulkan-1.3/*/accepted")
+        entry = self.entry(UNIT="obscura-cap-vulkan-1.3.target", MESSAGE=text)
+        self.assertEqual(journal_verdict.classify(entry, "obscura-cap-vulkan-1.3.target"), "skipped")
+
+    def test_unrecognized_finished_start_is_unknown_not_reached(self):
+        # The VM failure: a new skip wording must not read as a real start.
+        entry = self.entry(MESSAGE="t.target - T was not started for some new reason")
+        self.assertEqual(journal_verdict.classify(entry, "t.target"), "unknown")
+
+    def test_reached_is_positive_and_exact(self):
+        self.assertEqual(journal_verdict.classify(self.entry(MESSAGE="Reached target t.target - T."), "t.target"),
+                         "reached")
+        self.assertEqual(journal_verdict.classify(self.entry(MESSAGE="Reached target t.target."), "t.target"),
+                         "reached")
+        # Another unit whose name starts with this one's isn't this one.
+        other = self.entry(UNIT="t.target", MESSAGE="Reached target t.target2 - T2.")
+        self.assertEqual(journal_verdict.classify(other, "t.target"), "unknown")
+
+    def test_entries_from_other_processes_are_ignored(self):
+        entry = self.entry(_PID="4242")
+        self.assertIsNone(journal_verdict.classify(entry, "t.target"))
 
     def test_byte_array_message(self):
         message = list("Reached target t.target.".encode())

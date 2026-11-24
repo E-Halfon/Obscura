@@ -40,3 +40,92 @@ jobs:
 
           # enabled by default, disable if your image is small and you want faster builds
           maximize_build_space: true
+
+  # Task 0.2b: the probed-capability gate test against the systemd the image ships (262),
+  # with the image's installed units, not the runner's systemd (255) and the repo's files.
+  # Runs the built image as a container with systemd as PID 1. Also exports PID 1's
+  # finished-start-job entries (journalctl -o export and json) as an artifact, the source of
+  # the recorded 262 entries in tests/fixtures/journal/.
+  gate-on-image:
+    name: gate-on-image
+    needs: bluebuild
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space for the image
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - name: Find the image built for this commit
+        id: image
+        env:
+          TOKEN: ${{ github.token }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          repo="ghcr.io/${GITHUB_REPOSITORY,,}"
+          short=${GITHUB_SHA::7}
+          # bluebuild tags each build <short sha>-<fedora version>; for pull_request events
+          # GITHUB_SHA is the merge commit it built.
+          tags=$(skopeo list-tags --creds "$ACTOR:$TOKEN" "docker://$repo" | jq -r '.Tags[]')
+          tag=$(printf '%s\n' "$tags" | grep -E "^${short}-[0-9]+$" | sort -V | tail -n 1 || true)
+          if [ -z "$tag" ]; then
+            echo "no tag ${short}-<n> in $repo" >&2
+            exit 1
+          fi
+          digest=$(skopeo inspect --creds "$ACTOR:$TOKEN" --format '{{.Digest}}' "docker://$repo:$tag")
+          echo "image $repo:$tag @ $digest"
+          echo "ref=$repo@$digest" >>"$GITHUB_OUTPUT"
+          printf '%s' "$TOKEN" | sudo podman login ghcr.io -u "$ACTOR" --password-stdin
+
+      - name: Boot the image with systemd as PID 1
+        run: |
+          sudo podman pull -q "${{ steps.image.outputs.ref }}"
+          sudo podman run -d --name gate --privileged --systemd=always \
+            -v "$PWD:/work:ro" "${{ steps.image.outputs.ref }}" /sbin/init
+          state=$(sudo timeout 180 podman exec gate systemctl is-system-running --wait || true)
+          echo "system state: $state"
+          sudo podman exec gate systemctl --version | head -n 1
+          sudo podman exec gate systemctl --failed --no-pager || true
+          case "$state" in
+            running | degraded) ;;
+            *) echo "the container's systemd didn't finish booting" >&2; exit 1 ;;
+          esac
+
+      - name: Installed units match the repo
+        run: |
+          for unit in obscura-cap-vulkan-1.3-probe@.service obscura-cap-vulkan-1.3.target; do
+            sudo podman exec gate diff -u "/usr/lib/systemd/system/$unit" \
+              "/work/files/system/usr/lib/systemd/system/$unit"
+          done
+
+      - name: Probed-capability gate on the image's systemd
+        run: sudo podman exec gate bash /work/tests/ci/upholds-gate.sh --units /usr/lib/systemd/system
+
+      - name: Export PID 1's finished start jobs
+        if: ${{ !cancelled() }}
+        run: |
+          mkdir -p journal-export
+          # MESSAGE_ID SD_MESSAGE_UNIT_STARTED: real starts and condition skips alike.
+          for format in export json; do
+            sudo podman exec gate journalctl -q --no-pager -o "$format" _PID=1 \
+              MESSAGE_ID=39f53479d3a045ac8e11786248231fbf >"journal-export/start-jobs.$format" || true
+          done
+          sudo podman exec gate systemctl --version | head -n 1 >journal-export/systemd-version.txt
+          sudo podman exec gate journalctl -q --no-pager -o verbose _PID=1 \
+            MESSAGE_ID=39f53479d3a045ac8e11786248231fbf | grep -A12 obscura-test || true
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: gate-on-image-journal
+          path: journal-export/
+
+      - name: Remove the container
+        if: always()
+        run: sudo podman rm -f gate || true

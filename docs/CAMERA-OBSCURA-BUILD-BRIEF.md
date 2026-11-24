@@ -614,13 +614,21 @@ probed-capability gate on the runner's real systemd (`tests/ci/upholds-gate.sh`:
 of 20 rejecting probe starts, PID 1's journal logs the stand-in target's start job as
 skipped by its condition and never as a real "Reached target"; a control run without the
 gate must show a real "Reached target", the old bug), and lints for the units. CI runs
-systemd 255 (Ubuntu 24.04), the image 262; the VM tests cover 262.
+systemd 255 (Ubuntu 24.04), the image 262. The `gate-on-image` job (`build.yml`, after the
+image build) runs the same script inside the built image with systemd 262 as PID 1 and the
+image's installed units (checked identical to the repo's), and exports PID 1's
+finished-start-job entries as an artifact. The VM tests also cover 262.
 
 **How "never active" is proven** (`tests/lib/gate-checks.sh`, used by CI and the VM tests).
 The primary proof is the journal. A condition-skipped start job finishes as `done` and
 carries the same `MESSAGE_ID` as a real start (`39f53479…`), so the verdict is decided by
-the text ("was skipped because of an unmet condition" vs "Reached target"; classifier
-`tests/lib/journal_verdict.py`, tested against entries recorded on 255). Properties
+the text: a real start is identified positively ("Reached target <unit>"), a skip by the
+condition-check wording, which changed between versions (255: "was skipped because of an
+unmet condition check (…)", 262: "skipped, unmet condition check …"), and any other
+finished start job counts as "unknown", a failure, so a new wording can't pass silently or
+read as a start (classifier `tests/lib/journal_verdict.py`, tested against recorded
+entries). The first version only knew the 255 wording and failed the 262 VM pass of
+2026-11-24 on every skip. Properties
 (`ActiveEnterTimestamp` 0, `ConditionResult`, `Result`) are secondary and only checked
 while the unit is known to have stayed loaded: PID 1 garbage-collects an unreferenced
 inactive unit, and a reloaded one reads as never active (CI diagnostic run, 2026-11-24).

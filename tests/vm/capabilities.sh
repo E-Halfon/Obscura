@@ -372,6 +372,7 @@ readonly VULKAN_MARKERS=/run/obscura-cap/vulkan-1.3
 vulkan_never_active() {
     local verdicts reached skipped announced
     verdicts=$(gate_verdicts "$VULKAN_TARGET" _BOOT_ID="$BOOT_ID")
+    gate_check_unknown "journal for $VULKAN_TARGET" "$verdicts"
     reached=$(gate_count reached "$verdicts")
     skipped=$(gate_count skipped "$verdicts")
     if [ "$reached" = 0 ]; then
@@ -610,6 +611,7 @@ test_vulkan_no_fake() {
             fi
             # Primary: the journal of this start.
             verdicts=$(gate_verdicts "$VULKAN_TARGET" --after-cursor "$round_cursor")
+            gate_check_unknown "journal for $VULKAN_TARGET" "$verdicts"
             if [ "$(gate_count reached "$verdicts")" != 0 ]; then
                 fail "$node round $round: a real 'Reached target $VULKAN_TARGET':"
                 gate_lines reached "$verdicts"
@@ -656,6 +658,7 @@ test_vulkan_no_fake() {
     systemctl stop "$unit" 2>/dev/null || true
     stand_in_wait_idle "$VULKAN_TARGET" 15 || fail "$VULKAN_TARGET still has a job 15 s after cancelling $unit"
     verdicts=$(gate_verdicts "$VULKAN_TARGET" --after-cursor "$round_cursor")
+    gate_check_unknown "journal for $VULKAN_TARGET" "$verdicts"
     if [ "$(gate_count reached "$verdicts")" != 0 ]; then
         fail "a real 'Reached target $VULKAN_TARGET' after starting $unit:"
         gate_lines reached "$verdicts"

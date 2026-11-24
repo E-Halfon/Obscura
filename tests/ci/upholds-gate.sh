@@ -195,6 +195,7 @@ for round in $(seq 1 20); do
 
     # Primary: the journal of this start.
     verdicts=$(gate_verdicts "$target" --after-cursor "$round_cursor")
+    gate_check_unknown "journal for $target" "$verdicts"
     if [ "$(gate_count reached "$verdicts")" != 0 ]; then
         fail "round $round: the journal has a real 'Reached target' for $target:"
         gate_lines reached "$verdicts" >&2
@@ -236,6 +237,7 @@ systemctl start "$probe" || true
 stand_in_wait_idle "$target" 10 || true
 debug_end "$control_cursor" 'obscura-test-control'
 verdicts=$(gate_verdicts "$target" --after-cursor "$control_cursor")
+gate_check_unknown "journal for $target" "$verdicts"
 if [ "$(gate_count reached "$verdicts")" != 0 ]; then
     pass "control: without ConditionPathExistsGlob= a rejecting probe makes the target active (the old bug is visible here):"
     gate_lines reached "$verdicts"
@@ -254,6 +256,7 @@ accept_cursor=$(journal_cursor)
 systemctl start "$probe"
 stand_in_wait_idle "$target" 10 || true
 verdicts=$(gate_verdicts "$target" --after-cursor "$accept_cursor")
+gate_check_unknown "journal for $target" "$verdicts"
 if [ "$(gate_count reached "$verdicts")" != 0 ] && [ "$(show "$target" ActiveState)" = active ] \
     && [ -e /run/obscura-cap/test-accept/x/accepted ]; then
     pass "accept: 'Reached target', marker /run/obscura-cap/test-accept/x/accepted written and $target active"
@@ -291,6 +294,7 @@ else
     pass "spam: retries are bounded ($lines lines in 10 s)"
 fi
 verdicts=$(gate_verdicts "$target" --after-cursor "$spam_cursor")
+gate_check_unknown "journal for $target" "$verdicts"
 if [ "$(gate_count reached "$verdicts")" != 0 ] || [ "$(show "$target" ActiveState)" = active ]; then
     fail "spam: $target came back active without a marker"
     gate_lines reached "$verdicts" >&2

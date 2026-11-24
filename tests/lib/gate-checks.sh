@@ -5,8 +5,10 @@
 #
 # Primary proof that a target never became active: PID 1's journal entry for each start
 # job of the target is the "skipped because of an unmet condition" one, and there is no
-# real "Reached target" (journal_verdict.py: MESSAGE_ID UNIT_STARTED, JOB_TYPE=start,
-# JOB_RESULT=done, and not a skip text). Both are logged at the default log level.
+# real "Reached target" (journal_verdict.py: a real start is identified positively by
+# "Reached target <unit>", a skip by the condition-check wording of systemd 255 or 262, and
+# any other finished start job is "unknown", a failure). All are logged at the default
+# log level.
 #
 # Secondary: properties (ActiveEnterTimestamp == 0, ConditionResult, Result). Only valid
 # while the unit stayed loaded: PID 1 garbage-collects an unreferenced inactive unit, and
@@ -36,6 +38,18 @@ gate_count() {
 # gate_lines <verdict> <verdicts>: those lines' messages, indented, for a failure report.
 gate_lines() {
     printf '%s\n' "$2" | grep "^$1"$'\t' | cut -f2- | sed 's/^/      /' || true
+}
+
+# gate_check_unknown <context> <verdicts>: fail (the caller's fail()) for every finished
+# start job that is neither a real "Reached target" nor a recognized condition skip, so a
+# new systemd wording is a loud failure rather than a silent pass or a false "reached".
+gate_check_unknown() {
+    local context=$1 verdicts=$2 count
+    count=$(gate_count unknown "$verdicts")
+    if [ "$count" != 0 ]; then
+        fail "$context: $count finished start job(s) neither 'Reached target' nor a recognized condition skip (new systemd wording? see tests/lib/journal_verdict.py):"
+        gate_lines unknown "$verdicts"
+    fi
 }
 
 # gate_pin <unit>...: keep the units loaded (Manager.RefUnit from a background process)
