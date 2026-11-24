@@ -5,7 +5,8 @@
 # See tests/vm/README.md for VMware setup. Exit codes: 0 pass, 1 fail, 77 skipped.
 #
 #   state [--present a,b]  C-1: no failed units; each capability matches expectation
-#                          (default: all absent); no capd warnings; DBus tree matches
+#                          (default: all absent; camera from ground truth); no capd
+#                          warnings; DBus tree matches
 #   virt                   C-2: virt present (needs nested virtualization; see README)
 #   hotplug-camera [N]     C-3: connect/disconnect a USB webcam N times (default 10)
 #   hotplug-battery [N]    C-4: load/unload test_power N times (skips if not shipped)
@@ -66,6 +67,23 @@ kind_of() {
     sed -nE 's/^kind[[:space:]]*=[[:space:]]*"([a-z]+)".*/\1/p' "$VOCABULARY_DIR/$1.toml"
 }
 
+# capture_nodes: the /dev/video* nodes that are real cameras, one "<node> <sysfs path>"
+# per line: ID_V4L_CAPABILITIES has :capture: and the device isn't under
+# /sys/devices/virtual (v4l2loopback, vivid). C-1's ground truth for `camera`.
+capture_nodes() {
+    local node caps path
+    for node in /dev/video*; do
+        if [ ! -e "$node" ]; then
+            continue
+        fi
+        caps=$(udevadm info --query=property --property=ID_V4L_CAPABILITIES --value --name="$node" 2>/dev/null || true)
+        path=$(readlink -f "/sys/class/video4linux/${node#/dev/}" 2>/dev/null || true)
+        if [[ "$caps" == *:capture:* ]] && [[ "$path" != /sys/devices/virtual/* ]]; then
+            echo "$node $path"
+        fi
+    done
+}
+
 # Exit status of obscura-cap has, without tripping set -e.
 has_status() {
     local status=0
@@ -93,7 +111,7 @@ wait_until() {
 }
 
 test_state() {
-    local present_list="" name expected status units warnings objects
+    local present_list="" name expected status units warnings objects cameras
     if [ "${1:-}" = "--present" ]; then
         present_list=",${2:-},"
     fi
@@ -123,6 +141,21 @@ test_state() {
                 fail "obscura-cap-$name.target is failed (must be active or inactive)"
             fi
             continue
+        fi
+        if [ "$name" = camera ]; then
+            # Ground truth, not the baseline: present iff a real capture node exists.
+            cameras=$(capture_nodes)
+            if [ -n "$cameras" ]; then
+                expected=0
+                echo "      camera ground truth: capture nodes outside /sys/devices/virtual:"
+                printf '%s\n' "$cameras" | sed 's/^/        /'
+            else
+                expected=1
+                echo "      camera ground truth: no /dev/video* node with :capture: outside /sys/devices/virtual"
+            fi
+            if [[ "$present_list" == *",camera,"* ]] && [ "$expected" = 1 ]; then
+                fail "--present lists camera, but no real capture node exists"
+            fi
         fi
         status=$(has_status "$name")
         if [ "$status" = "$expected" ]; then
@@ -713,10 +746,14 @@ readonly UNPLUG_PROBE=obscura-test-$UNPLUG_LABEL-probe
 readonly UNPLUG_APPEAR_SECONDS=15
 
 # video_device_units: the plugged dev-video*.device units, sorted. Both sides of the C-14
-# comparison use this; listing "before" with --all would include dead units left from an
-# earlier connect, so the same node reappearing wouldn't count as new.
+# comparison use this. It lists with --all (the form that showed dev-video1.device in the
+# VM pass of 2026-11-24, where --type=device --state=plugged printed nothing) and keeps
+# only active/plugged rows, so dead units left from an earlier connect don't count and
+# the same node reappearing is new. Only capture nodes get a unit (TAGS=:systemd: from
+# 70-obscura-cap-camera.rules); a webcam's metadata node and OBS's output node don't.
+readonly VIDEO_UNITS_CMD="systemctl list-units --all --plain --no-legend 'dev-video*'"
 video_device_units() {
-    systemctl list-units --type=device --state=plugged --plain --no-legend 'dev-video*' | awk '{print $1}' | sort
+    eval "$VIDEO_UNITS_CMD" | awk '$1 ~ /^dev-video[0-9]+\.device$/ && $3 == "active" && $4 == "plugged" {print $1}' | sort
 }
 test_unplug_mechanism() {
     local run=/run/systemd/system device elapsed=0 before after waited start stable_since now now_units
@@ -768,6 +805,11 @@ test_unplug_mechanism() {
         fail "no new dev-video*.device appeared within $UNPLUG_APPEAR_SECONDS s of Connect (was the webcam still connected? see VMware's USB settings)"
         echo "      before Connect: $(printf '%s' "$before" | tr '\n' ' ')"
         echo "      after ${UNPLUG_APPEAR_SECONDS} s:  $(printf '%s' "$after" | tr '\n' ' ')"
+        echo "      listing command: $VIDEO_UNITS_CMD | awk '\$1 ~ /^dev-video[0-9]+\\.device\$/ && \$3 == \"active\" && \$4 == \"plugged\"'"
+        echo "      its raw output now:"
+        eval "$VIDEO_UNITS_CMD" | sed 's/^/        /' || true
+        echo "      capture nodes now (camera ground truth):"
+        capture_nodes | sed 's/^/        /' || true
         return 0
     fi
     echo "      $device appeared ~$waited ms after Enter"

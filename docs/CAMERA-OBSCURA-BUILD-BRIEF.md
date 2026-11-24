@@ -328,7 +328,7 @@ accept drift. Shipping beats purity.
 | 0.1 | **Universal-image skeleton:** BlueBuild recipe on Universal Blue Aurora (`stable`), signed image builds, boots on the desktop | — | 3 |
 | 0.2 | **Capability module framework** (udev → systemd → DBus) — ✅ **done** (PR #2, 2026-11-22; open VM tests tracked in §7, "Stage 0 — capability framework") | 0.1 | 3 |
 | 0.2b | **Static capabilities:** `x86-64-v3` and `vulkan-1.3` (notes below the table). Needed for `pack-wine` to reach Ready | 0.2 | 2 |
-| 0.2c | **`camera` counts hardware only** (fixes a 0.2 bug; notes below the table) | 0.2 | 1 |
+| 0.2c | **`camera` counts hardware only** (hardening: a streaming v4l2loopback node must not count; notes below the table) | 0.2 | 1 |
 | 0.3 | **KDE Plasma shell:** strip, theme, Windows-style layout | 0.1 | 2 |
 | 0.4 | Wine + binfmt_misc dispatch, `.exe` → window — **delivered as `pack-wine`** | 0.3, 0.21 | 3 |
 | 0.5 | Wine sandbox: bubblewrap, no-network default | 0.4 | 2 |
@@ -424,14 +424,16 @@ accept drift. Shipping beats purity.
   systemd-style: `vulkan-1.3` → `vulkan_2d1_2e3`, `x86-64-v3` → `x86_2d64_2dv3`.
 - **Tests:** §7, "Stage 0 — static capabilities (task 0.2b)".
 
-**0.2c notes: `camera` counts hardware only.** Found in the 0.2b VM pass (2026-11-24),
-pre-existing since 0.2. Aurora ships v4l2loopback, and its "OBS Virtual Camera"
-(`/dev/video0`, under `/sys/devices/virtual/`, `ID_V4L_CAPABILITIES=:video_output:` when
-read) makes `camera` present with no camera attached; C-1 fails on it ("obscura-cap has
-returned 0, expected 1"). `70-obscura-cap-camera.rules` already requires `:capture:`,
-so 0.2c first finds how the loopback node gets through: v4l2loopback can advertise
-capture depending on `exclusive_caps` and whether a writer has it open, and the rule
-also runs on `change` events. The rule then counts a node only if all of these hold:
+**0.2c notes: `camera` counts hardware only.** A hardening task: nothing fails today.
+Aurora ships v4l2loopback ("OBS Virtual Camera", `/dev/video0` under
+`/sys/devices/virtual/`). Idle, its node is output-only
+(`ID_V4L_CAPABILITIES=:video_output:`, no `systemd` tag, no `SYSTEMD_WANTS`), so
+`70-obscura-cap-camera.rules` doesn't match it and `camera` stays absent. The 0.2b VM pass
+confirmed this (2026-11-24): with the webcam disconnected, `obscura-cap-camera.target`
+was inactive and `has camera` printed absent. But with `exclusive_caps`, v4l2loopback
+switches the node to `:capture:` while a producer streams into it, and the rule also runs
+on `change` events. So a running OBS virtual camera would make `camera` present with no
+camera attached. After 0.2c the rule counts a node only if all of these hold:
 - it has the capture capability (`:capture:`);
 - its device path has no `/devices/virtual/` parent;
 - its driver isn't `v4l2loopback` or `vivid` (excluded by name, as a second line of
@@ -439,11 +441,14 @@ also runs on `change` events. The rule then counts a node only if all of these h
 - it isn't a metadata-only node (UVC's second node per camera, `:meta:` without
   `:capture:`).
 
-Tests: a udev-rule lint and `udevadm test`-style unit tests with recorded property sets
-(a UVC capture node, its metadata node, v4l2loopback in both `exclusive_caps` modes,
-vivid), and VM tests C-1 (camera absent with v4l2loopback loaded) and C-3 (the webcam
-still counts). Until 0.2c lands, C-1's camera check fails in any VM with v4l2loopback
-loaded; that failure is this bug, not a regression.
+Tests:
+- a udev-rule lint;
+- `udevadm test`-style unit tests with recorded property sets: a UVC capture node, its
+  metadata node, v4l2loopback in both `exclusive_caps` modes (idle and streaming), and
+  vivid;
+- VM test C-1 with the OBS virtual camera **running**, which needs `camera` absent. C-1
+  compares against the same ground truth as the rule (§7);
+- C-3: the webcam still counts.
 
 **Open decision: the OS updater.** Universal Blue's `uupd` updates the image, Flatpaks,
 brew and distrobox on a timer. Obscura's updates must follow its no-surprises policy: one
@@ -584,9 +589,11 @@ VMware Workstation). The C-tests are defined in `tests/vm/capabilities.sh` and
 T-50 (one USB stick boots all three devices with correct capabilities and no failed units)
 also remains open until the hardware exists.
 
-**C-1 and v4l2loopback.** C-1's camera check fails in any VM where v4l2loopback is loaded
-(Aurora ships it: "OBS Virtual Camera"), because `camera` counts the loopback node. That
-is the 0.2c bug, not a regression; it passes once 0.2c lands.
+**C-1's camera check uses ground truth.** C-1 doesn't assume there is no camera. `camera`
+must be present if and only if some `/dev/video*` node has `:capture:` in
+`ID_V4L_CAPABILITIES` and isn't under `/sys/devices/virtual`, and the script prints the
+matching nodes. The 0.2b VM pass failed C-1 because the C920 was connected, not because of
+v4l2loopback.
 
 ### Stage 0 — pack format (task 0.21)
 
