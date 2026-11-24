@@ -328,6 +328,7 @@ accept drift. Shipping beats purity.
 | 0.1 | **Universal-image skeleton:** BlueBuild recipe on Universal Blue Aurora (`stable`), signed image builds, boots on the desktop | — | 3 |
 | 0.2 | **Capability module framework** (udev → systemd → DBus) — ✅ **done** (PR #2, 2026-11-22; open VM tests tracked in §7, "Stage 0 — capability framework") | 0.1 | 3 |
 | 0.2b | **Static capabilities:** `x86-64-v3` and `vulkan-1.3` (notes below the table). Needed for `pack-wine` to reach Ready | 0.2 | 2 |
+| 0.2c | **`camera` counts hardware only** (fixes a 0.2 bug; notes below the table) | 0.2 | 1 |
 | 0.3 | **KDE Plasma shell:** strip, theme, Windows-style layout | 0.1 | 2 |
 | 0.4 | Wine + binfmt_misc dispatch, `.exe` → window — **delivered as `pack-wine`** | 0.3, 0.21 | 3 |
 | 0.5 | Wine sandbox: bubblewrap, no-network default | 0.4 | 2 |
@@ -422,6 +423,27 @@ accept drift. Shipping beats purity.
   as pack manifests), and object paths escape every byte outside `[a-z0-9]` as `_xx`,
   systemd-style: `vulkan-1.3` → `vulkan_2d1_2e3`, `x86-64-v3` → `x86_2d64_2dv3`.
 - **Tests:** §7, "Stage 0 — static capabilities (task 0.2b)".
+
+**0.2c notes: `camera` counts hardware only.** Found in the 0.2b VM pass (2026-11-24),
+pre-existing since 0.2. Aurora ships v4l2loopback, and its "OBS Virtual Camera"
+(`/dev/video0`, under `/sys/devices/virtual/`, `ID_V4L_CAPABILITIES=:video_output:` when
+read) makes `camera` present with no camera attached; C-1 fails on it ("obscura-cap has
+returned 0, expected 1"). `70-obscura-cap-camera.rules` already requires `:capture:`,
+so 0.2c first finds how the loopback node gets through: v4l2loopback can advertise
+capture depending on `exclusive_caps` and whether a writer has it open, and the rule
+also runs on `change` events. The rule then counts a node only if all of these hold:
+- it has the capture capability (`:capture:`);
+- its device path has no `/devices/virtual/` parent;
+- its driver isn't `v4l2loopback` or `vivid` (excluded by name, as a second line of
+  defence);
+- it isn't a metadata-only node (UVC's second node per camera, `:meta:` without
+  `:capture:`).
+
+Tests: a udev-rule lint and `udevadm test`-style unit tests with recorded property sets
+(a UVC capture node, its metadata node, v4l2loopback in both `exclusive_caps` modes,
+vivid), and VM tests C-1 (camera absent with v4l2loopback loaded) and C-3 (the webcam
+still counts). Until 0.2c lands, C-1's camera check fails in any VM with v4l2loopback
+loaded; that failure is this bug, not a regression.
 
 **Open decision: the OS updater.** Universal Blue's `uupd` updates the image, Flatpaks,
 brew and distrobox on a timer. Obscura's updates must follow its no-surprises policy: one
@@ -562,6 +584,10 @@ VMware Workstation). The C-tests are defined in `tests/vm/capabilities.sh` and
 T-50 (one USB stick boots all three devices with correct capabilities and no failed units)
 also remains open until the hardware exists.
 
+**C-1 and v4l2loopback.** C-1's camera check fails in any VM where v4l2loopback is loaded
+(Aurora ships it: "OBS Virtual Camera"), because `camera` counts the loopback node. That
+is the 0.2c bug, not a regression; it passes once 0.2c lands.
+
 ### Stage 0 — pack format (task 0.21)
 
 Defined in `tests/vm/packs.sh` and `tests/vm/README.md`. The unit and integration tests
@@ -594,7 +620,7 @@ start at C-10).
 |---|---|---|
 | C-10 | x86-64-v3 on the VM | Present exactly when `/proc/cpuinfo` has the v2+v3 flags; every condition line agrees with its flag; glibc's `ld.so` agrees; nothing failed |
 | C-11 | Boot ordering | capd starts only after the x86-64-v3 target's conditions ran |
-| **C-12** | **lavapipe doesn't count** | lavapipe reports Vulkan ≥ 1.3, yet `vulkan-1.3` is absent, and never was this boot: the target's `ActiveEnterTimestamp` is 0, the journal has no "Reached target" for it, and capd never announced it; each render-node probe is skipped (`exec-condition`) with a logged reason and no accept marker; no failed units. The same run records `real-vmware-lavapipe-*` with `capture.py`; the CI negative test reads only that recording and fails until it's committed |
+| **C-12** | **lavapipe doesn't count** | lavapipe reports Vulkan ≥ 1.3, yet `vulkan-1.3` is absent, and never was this boot: the target's `ActiveEnterTimestamp` is 0, this boot's journal (boot ID, since the current PID 1 started) has no "Reached target" for it, and capd never announced it; each render-node probe is skipped (`exec-condition`) with a logged reason and no accept marker; no failed units. The same run records `real-vmware-lavapipe-*` with `capture.py`; the CI negative test reads only that recording (committed 2026-11-24) |
 | C-13 | Can't be faked | Manual start of the target refused; restarting each probe 20 times never activates the target, and each restart evaluated the gate (`ConditionResult=no`); `obscura-cap watch` sees no `+vulkan-1.3`; a probe for a nonexistent node never runs, and the target's start job waits behind it instead of starting |
 | C-14 | Unplug, no reboot (mechanism) | A stand-in of the probe and target (`tests/lib/stand-in.sh`), bound to the webcam, writes its marker and activates the target, then stops within 5 s of unplugging, marker gone |
 | P-2 | pack-wine on the VM (after 0.2b) | Insufficient hardware, `vulkan-1.3` absent rather than unknown |

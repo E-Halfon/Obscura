@@ -35,6 +35,22 @@ readonly HERE
 . "$HERE/../lib/vm-checks.sh"
 SKIPPED=0
 
+# Journal reads are scoped to this boot explicitly: this kernel boot ID and, since a soft
+# reboot keeps the boot ID (bootc can apply an image that way), only entries since the
+# current PID 1 started. Plain -b matched the previous image's "Reached target" lines in
+# the VM pass of 2026-11-24.
+BOOT_ID=$(tr -d - </proc/sys/kernel/random/boot_id)
+readonly BOOT_ID
+USERSPACE_START=$(systemctl show --timestamp=unix -P UserspaceTimestamp 2>/dev/null || true)
+readonly USERSPACE_START
+journal_this_boot() {
+    if [[ "$USERSPACE_START" == @* ]]; then
+        journalctl -q --no-pager _BOOT_ID="$BOOT_ID" --since "$USERSPACE_START" "$@"
+    else
+        journalctl -q --no-pager _BOOT_ID="$BOOT_ID" "$@"
+    fi
+}
+
 # Each test runs in its own subshell (run_test), so failures are recorded in a file
 # rather than a variable, which the subshell couldn't pass back.
 RESULTS=$(mktemp)
@@ -129,7 +145,7 @@ test_state() {
         fi
     done
 
-    warnings=$(journalctl -b -q -p warning SYSLOG_IDENTIFIER=obscura-capd --no-pager || true)
+    warnings=$(journal_this_boot -p warning SYSLOG_IDENTIFIER=obscura-capd || true)
     if [ -z "$warnings" ]; then
         pass "no capd warnings this boot"
     else
@@ -364,19 +380,21 @@ vulkan_never_active() {
     fi
     # Journal output is captured before it is searched: under pipefail, grep -q could
     # SIGPIPE the writer, and the check would read as "not found", a false pass.
-    local structured text description announced
+    local structured text description announced matches
     description=$(systemctl show -P Description "$VULKAN_TARGET")
-    structured=$(journalctl -b -q --no-pager MESSAGE_ID="$UNIT_STARTED" UNIT="$VULKAN_TARGET")
-    text=$(journalctl -b -q --no-pager -o cat _PID=1)
-    if [ -n "$structured" ] || [[ "$text" == *"Reached target $VULKAN_TARGET"* ]] \
-        || [[ "$text" == *"Reached target $description"* ]]; then
-        fail "the journal has 'Reached target $VULKAN_TARGET' this boot"
+    structured=$(journal_this_boot -o short-precise MESSAGE_ID="$UNIT_STARTED" UNIT="$VULKAN_TARGET")
+    text=$(journal_this_boot -o short-precise _PID=1)
+    matches=$(printf '%s\n' "$text" | grep -F -e "Reached target $VULKAN_TARGET" -e "Reached target $description" || true)
+    if [ -n "$structured" ] || [ -n "$matches" ]; then
+        fail "the journal has 'Reached target $VULKAN_TARGET' this boot (boot $BOOT_ID, since ${USERSPACE_START:-boot start}):"
+        printf '%s\n' "$structured" "$matches" | grep . | sort -u | sed 's/^/      /'
     else
-        pass "no 'Reached target $VULKAN_TARGET' in this boot's journal"
+        pass "no 'Reached target $VULKAN_TARGET' this boot (boot $BOOT_ID, since ${USERSPACE_START:-boot start})"
     fi
-    announced=$(journalctl -b -q --no-pager -o cat SYSLOG_IDENTIFIER=obscura-capd OBSCURA_CAPABILITY=vulkan-1.3)
+    announced=$(journal_this_boot -o short-precise SYSLOG_IDENTIFIER=obscura-capd OBSCURA_CAPABILITY=vulkan-1.3)
     if [[ "$announced" == *"capability present: vulkan-1.3"* ]]; then
-        fail "capd announced Added(vulkan-1.3) this boot"
+        fail "capd announced Added(vulkan-1.3) this boot:"
+        printf '%s\n' "$announced" | grep -F "capability present: vulkan-1.3" | sed 's/^/      /'
     else
         pass "capd never announced Added(vulkan-1.3) this boot"
     fi
@@ -489,7 +507,7 @@ render_nodes() {
 
 # C-12: the key negative test. lavapipe reports Vulkan 1.3 here, and it must not count.
 test_vulkan_lavapipe() {
-    local summary lavapipe nodes node unit active result units
+    local summary lavapipe nodes node unit active result units reason
     if ! command -v vulkaninfo >/dev/null; then
         fail "vulkaninfo missing: the image must ship vulkan-tools"
         return 0
@@ -546,9 +564,10 @@ test_vulkan_lavapipe() {
         if [ -e "$VULKAN_MARKERS/$node" ]; then
             fail "$VULKAN_MARKERS/$node exists although the probe rejected $node"
         fi
-        if journalctl -b -q --no-pager SYSLOG_IDENTIFIER=obscura-cap-vulkan-probe | grep -q "$node"; then
+        reason=$(journal_this_boot -o cat SYSLOG_IDENTIFIER=obscura-cap-vulkan-probe | grep -F "$node" | tail -n 1 || true)
+        if [ -n "$reason" ]; then
             pass "the journal gives the reason for $node:"
-            journalctl -b -q --no-pager -o cat SYSLOG_IDENTIFIER=obscura-cap-vulkan-probe | grep "$node" | tail -n 1 | sed 's/^/      /'
+            printf '      %s\n' "$reason"
         else
             fail "no probe journal entry for $node"
         fi
@@ -673,8 +692,16 @@ cleanup_no_fake() {
 readonly UNPLUG_LABEL=unplug
 readonly UNPLUG_TARGET=obscura-test-$UNPLUG_LABEL.target
 readonly UNPLUG_PROBE=obscura-test-$UNPLUG_LABEL-probe
+readonly UNPLUG_APPEAR_SECONDS=15
+
+# video_device_units: the plugged dev-video*.device units, sorted. Both sides of the C-14
+# comparison use this; listing "before" with --all would include dead units left from an
+# earlier connect, so the same node reappearing wouldn't count as new.
+video_device_units() {
+    systemctl list-units --type=device --state=plugged --plain --no-legend 'dev-video*' | awk '{print $1}' | sort
+}
 test_unplug_mechanism() {
-    local run=/run/systemd/system device elapsed=0 before after
+    local run=/run/systemd/system device elapsed=0 before after waited start
     if [ ! -t 0 ]; then
         skip "interactive: needs you to connect and disconnect the webcam in VMware"
     fi
@@ -688,16 +715,27 @@ test_unplug_mechanism() {
 
     echo "Disconnect the webcam now (VM > Removable Devices > <camera> > Disconnect), then press Enter."
     read -r _
-    before=$(systemctl list-units --type=device --all --plain --no-legend 'dev-video*' | awk '{print $1}' | sort)
+    before=$(video_device_units)
     echo "Connect the webcam (VM > Removable Devices > <camera> > Connect), then press Enter."
     read -r _
-    sleep 1
-    after=$(systemctl list-units --type=device --plain --no-legend 'dev-video*' | awk '{print $1}' | sort)
-    device=$(comm -13 <(printf '%s\n' "$before") <(printf '%s\n' "$after") | head -n 1)
+    # The C920 takes up to ~5 s after Connect; poll up to UNPLUG_APPEAR_SECONDS.
+    start=$(date +%s%3N)
+    while true; do
+        after=$(video_device_units)
+        device=$(comm -13 <(printf '%s\n' "$before") <(printf '%s\n' "$after") | grep . | head -n 1 || true)
+        waited=$(($(date +%s%3N) - start))
+        if [ -n "$device" ] || [ "$waited" -ge $((UNPLUG_APPEAR_SECONDS * 1000)) ]; then
+            break
+        fi
+        sleep 0.2
+    done
     if [ -z "$device" ]; then
-        fail "no new dev-video*.device appeared (was the webcam still connected? see VMware's USB settings)"
+        fail "no new dev-video*.device appeared within $UNPLUG_APPEAR_SECONDS s of Connect (was the webcam still connected? see VMware's USB settings)"
+        echo "      before Connect: $(printf '%s' "$before" | tr '\n' ' ')"
+        echo "      after ${UNPLUG_APPEAR_SECONDS} s:  $(printf '%s' "$after" | tr '\n' ' ')"
         return 0
     fi
+    echo "      $device appeared ~$waited ms after Enter"
     device=${device#dev-}
     device=${device%.device}
     systemctl start "$UNPLUG_PROBE@$device.service"
