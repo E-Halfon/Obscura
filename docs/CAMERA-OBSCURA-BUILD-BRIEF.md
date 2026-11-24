@@ -327,7 +327,7 @@ accept drift. Shipping beats purity.
 |---|---|---|---|
 | 0.1 | **Universal-image skeleton:** BlueBuild recipe on Universal Blue Aurora (`stable`), signed image builds, boots on the desktop | — | 3 |
 | 0.2 | **Capability module framework** (udev → systemd → DBus) — ✅ **done** (PR #2, 2026-11-22; open VM tests tracked in §7, "Stage 0 — capability framework") | 0.1 | 3 |
-| 0.2b | **Static capabilities:** `x86-64-v3` and `vulkan-1.3` (notes below the table). Needed for `pack-wine` to reach Ready | 0.2 | 2 |
+| 0.2b | **Static capabilities:** `x86-64-v3` and `vulkan-1.3` (notes below the table). Needed for `pack-wine` to reach Ready — ✅ **done** (PR #5, 2026-11-24; open items in §7, "Stage 0 — static capabilities") | 0.2 | 2 |
 | 0.2c | **`camera` counts hardware only** (hardening: a streaming v4l2loopback node must not count; notes below the table) | 0.2 | 1 |
 | 0.3 | **KDE Plasma shell:** strip, theme, Windows-style layout | 0.1 | 2 |
 | 0.4 | Wine + binfmt_misc dispatch, `.exe` → window — **delivered as `pack-wine`** | 0.3, 0.21 | 3 |
@@ -365,7 +365,7 @@ accept drift. Shipping beats purity.
 - **`x86-64-v3` is a fixed CPU fact.** Pure systemd conditions: one
   `ConditionCPUFeature=` line per psABI v2 and v3 feature. systemd ANDs repeated
   conditions together, so no oneshot service is needed.
-  - **Checked:** Aurora stable is Fedora 45 with systemd 262.2. Its CPUID table
+  - **Checked:** Aurora stable is Fedora 45 with systemd 262.1 (262.1-1.fc45). Its CPUID table
     (`src/basic/virt.c`) has every name used: v2 `cx16 lahf_lm popcnt pni sse4_1 sse4_2
     ssse3`, v3 `avx avx2 bmi1 bmi2 f16c fma3 abm movbe xsave osxsave`. **FMA is `fma3`**
     and LZCNT is `abm`. A misspelled name fails silently (the capability would read absent
@@ -657,6 +657,17 @@ start at C-10).
 | D-2 | Desktop: recordings | `capture.py` recordings of the real GPUs committed as `real-*` |
 | **D-3** | **Desktop: unplug the last qualifying GPU** | Over ssh, remove each qualifying GPU (`echo 1 > /sys/bus/pci/devices/<BDF>/remove`): `vulkan-1.3` absent within 5 s, `Removed` emitted, nothing failed; `echo 1 > /sys/bus/pci/rescan` brings it back |
 
+**Result (2026-11-24).** Task 0.2b passed on the branch image, built from `bd4b960` and
+run in VMware Workstation:
+- `capabilities.sh all` (C-1 and C-5 to C-13): 0 failures, with the webcam disconnected;
+- C-14 `unplug`: the stand-in wrote its marker and its target was upheld; disconnecting
+  stopped the target in ~0 ms; `BindsTo=` stopped the probe and removed its marker; no
+  failed units;
+- P-2 `packs.sh wine`: insufficient-hardware, reason capability-absent.
+
+CI was green on that commit: `capd-tests`, and `bluebuild` including `gate-on-image` on
+systemd 262.
+
 **Open items** (they stay open after 0.2b is marked done):
 - **vulkan-1.3 present on real recordings** (RADV/ANV, discrete + integrated). Synthetic
   fixtures don't count. Open until D-2 records them with `capture.py` (a Fedora live USB
@@ -666,7 +677,15 @@ start at C-10).
 - **NVIDIA's proprietary driver** needs `/dev/nvidiactl` and `/dev/nvidia*`, which the
   probe's `DeviceAllow=char-drm` blocks, so it reads absent (fails safe). NVK needs only
   DRM. Decide when the desktop GPU is chosen: allow `char-nvidia*`, or require NVK.
-- D-1 to D-3 need the desktop (with T-50).
+- **D-1 to D-3** need the desktop (with T-50).
+- **Task 0.2c:** `camera` must not count a streaming v4l2loopback node (§6, 0.2c notes).
+- **The OS-updater decision** (§6, "Open decision: the OS updater"). Until it's made,
+  test VMs disable `uupd.timer`.
+- **CI and image systemd versions differ:** the runner has 255 (Ubuntu 24.04) and the
+  image 262. `upholds-gate.sh` runs on both: on the runner in `capd-tests`, and in the
+  image in `gate-on-image`. When the image moves to a new systemd, check
+  `gate-on-image`, and the classifier if PID 1's skip wording changed. Unknown wordings
+  fail the run. Branch protection should require `gate-on-image`; that's a repo setting.
 - **Known edge cases, accepted:** the target waits for the slowest pending probe, so a
   hung second GPU can delay `vulkan-1.3` by up to the probe's `TimeoutStartSec=` (90 s); a
   GPU stuck in uninterruptible sleep, or a failing `touch` of the marker, shows as a failed
