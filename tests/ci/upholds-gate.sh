@@ -34,6 +34,9 @@ cleanup() {
     trap - ERR
     set +e
     local label
+    if [ -n "${old_log_level:-}" ]; then
+        systemctl log-level "$old_log_level"
+    fi
     for label in reject control accept spam; do
         systemctl stop "obscura-test-$label-probe@x.service" >/dev/null 2>&1
     done
@@ -52,8 +55,7 @@ show() { systemctl show -P "$2" "$1"; }
 journal_cursor() {
     local text
     text=$(journalctl -n 1 --show-cursor --quiet --no-pager)
-    printf '%s
-' "$text" | sed -n 's/^-- cursor: //p'
+    printf '%s\n' "$text" | sed -n 's/^-- cursor: //p'
 }
 
 # reached_target <cursor> <unit>: 0 if PID 1 logged starting <unit> after <cursor>, by
@@ -72,6 +74,55 @@ reached_target() {
         *"Reached target $unit"* | *"Reached target $description"*) return 0 ;;
     esac
     return 1
+}
+
+# --- Diagnostics (task 0.2b, CI on systemd 255): state, transaction and journal of the
+# stand-in units, so a failure says why. They never change a pass or a fail.
+old_log_level=""
+dumped=" "
+
+# dump_units <unit>...: properties, status, unit file, and journal since $cursor.
+dump_units() {
+    local unit
+    for unit in "$@"; do
+        echo "::group::diagnostics: $unit"
+        systemctl show -p LoadState,ActiveState,SubState,Result,ConditionResult,ConditionTimestampMonotonic,ActiveEnterTimestampMonotonic,ExecMainStartTimestampMonotonic,InvocationID,Upholds,UpheldBy,Before,After "$unit" || true
+        systemctl status --no-pager --full "$unit" || true
+        systemctl cat "$unit" || true
+        echo "--- journal (UNIT= or _SYSTEMD_UNIT=) since the start of this script"
+        journalctl -q --no-pager -o verbose \
+            --output-fields=MESSAGE,MESSAGE_ID,UNIT,JOB_TYPE,JOB_RESULT,INVOCATION_ID \
+            --after-cursor "$cursor" UNIT="$unit" + _SYSTEMD_UNIT="$unit" || true
+        echo "::endgroup::"
+    done
+}
+
+# dump_once <key> <unit>...: dump_units the first time <key> is seen.
+dump_once() {
+    local key=$1
+    shift
+    case "$dumped" in
+        *" $key "*) return 0 ;;
+    esac
+    dumped="$dumped$key "
+    dump_units "$@"
+}
+
+# debug_on / debug_transaction <cursor> <pattern>: PID 1 at debug level, then its job
+# lines ("Enqueued", "Installed new job", "Job ... finished") for the matching units.
+debug_on() {
+    if [ -z "$old_log_level" ]; then
+        old_log_level=$(systemctl log-level)
+    fi
+    systemctl log-level debug
+}
+debug_transaction() {
+    local since=$1 pattern=$2 lines
+    lines=$(journalctl -q --no-pager -o short-monotonic --after-cursor "$since" _PID=1 || true)
+    echo "::group::diagnostics: PID 1 debug log for $pattern"
+    printf '%s\n' "$lines" | grep -E "$pattern" | head -n 300 || true
+    echo "::endgroup::"
+    systemctl log-level "$old_log_level"
 }
 
 if [ "$(id -u)" != 0 ]; then
@@ -106,35 +157,53 @@ for round in $(seq 1 20); do
     # Skipped starts count toward the default start limit (5 in 10 s); reset-failed also
     # resets the rate limiter, so round 6 doesn't end in start-limit-hit.
     systemctl reset-failed "$probe" 2>/dev/null || true
+    if [ "$round" = 1 ]; then
+        round_cursor=$(journal_cursor)
+        debug_on
+    fi
     systemctl restart "$probe" || true
     stand_in_wait_idle "$target" 10 || fail "round $round: $target still has a job after 10 s"
+    if [ "$round" = 1 ]; then
+        debug_transaction "$round_cursor" 'obscura-test-reject'
+        dump_units "$probe" "$target"
+    fi
     after=$(show "$target" ConditionTimestampMonotonic)
     if [ "$after" = "$before" ] || [ "$after" = 0 ]; then
         fail "round $round: $target's condition wasn't evaluated (Upholds= didn't pull it in?), so this round proves nothing"
+        dump_once not-evaluated "$probe" "$target"
     fi
     if [ "$(show "$target" ConditionResult)" != no ]; then
         fail "round $round: ConditionResult=$(show "$target" ConditionResult), expected no"
+        dump_once condition-result "$probe" "$target"
     fi
     if [ "$(show "$target" ActiveEnterTimestampMonotonic)" != 0 ] || [ "$(show "$target" ActiveState)" != inactive ]; then
         fail "round $round: $target became active ($(show "$target" ActiveState))"
+        dump_once became-active "$probe" "$target"
     fi
     if [ "$(show "$probe" Result)" != exec-condition ]; then
         fail "round $round: $probe Result=$(show "$probe" Result), expected exec-condition"
+        dump_once probe-result "$probe" "$target"
     fi
     if [ -e /run/obscura-cap/test-reject/x ]; then
         fail "round $round: the rejecting probe left its marker directory"
+        dump_once marker-left "$probe" "$target"
     fi
 done
 if reached_target "$cursor" "$target"; then
     fail "the journal has 'Reached target' for $target"
+    dump_once reached "$target"
 else
     pass "20 rejecting probe starts: $target never active, gate evaluated each time, no 'Reached target'"
 fi
 
 # --- control: without the condition the old bug shows (else this check proves nothing)
 target=obscura-test-control.target
+control_cursor=$(journal_cursor)
+debug_on
 systemctl start obscura-test-control-probe@x.service || true
 stand_in_wait_idle "$target" 10 || true
+debug_transaction "$control_cursor" 'obscura-test-control'
+dump_units obscura-test-control-probe@x.service "$target"
 if [ "$(show "$target" ActiveEnterTimestampMonotonic)" != 0 ] && reached_target "$cursor" "$target"; then
     pass "control: without ConditionPathExistsGlob= a rejecting probe makes the target active (the old bug is visible here)"
 else
