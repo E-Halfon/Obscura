@@ -33,10 +33,17 @@ class ProbeHarness(unittest.TestCase):
         environment.start()
         self.addCleanup(environment.stop)
 
-    def add_node(self, node, dev):
-        os.makedirs(os.path.join(self.sysfs, node), exist_ok=True)
+    def add_node(self, node, dev, driver="amdgpu"):
+        os.makedirs(os.path.join(self.sysfs, node, "device"), exist_ok=True)
         with open(os.path.join(self.sysfs, node, "dev"), "w", encoding="ascii") as handle:
             handle.write(dev)
+        uevent = os.path.join(self.sysfs, node, "device", "uevent")
+        if driver is None:
+            if os.path.exists(uevent):
+                os.remove(uevent)
+            return
+        with open(uevent, "w", encoding="ascii") as handle:
+            handle.write("DRIVER=" + driver + "\nPCI_SLOT_NAME=0000:03:00.0\n")
 
     def messages(self):
         return [call.args[2] for call in self.sent.call_args_list]
@@ -86,10 +93,87 @@ class InProcessProbeTest(ProbeHarness):
         with self.run_with(documents):
             self.assert_absent_with("no hardware-accelerated Vulkan 1.3 device", node="renderD129")
 
-    def test_virtual_gpu_is_absent(self):
+    def test_venus_is_absent_even_with_a_passed_through_type(self):
+        """Venus can report the host GPU's deviceType; the fixture says DISCRETE_GPU."""
         documents, _ = fixtures.load_scenario("synthetic-venus-virtual")
         with self.run_with(documents):
-            self.assert_absent_with("VIRTUAL_GPU")
+            self.assert_absent_with("MESA_VENUS")
+
+    def test_virtual_kernel_driver_is_absent(self):
+        """A hardware-looking Vulkan device on a virtual GPU's render node doesn't count, and
+        the log still says what each device was."""
+        documents, _ = fixtures.load_scenario("synthetic-radv-lavapipe")
+        for driver in ("vmwgfx", "virtio_gpu", "vkms", "vgem"):
+            with self.subTest(driver):
+                self.add_node("renderD128", "226:128\n", driver=driver)
+                with self.run_with(documents):
+                    self.assert_absent_with("kernel driver " + driver + " is a virtual GPU")
+                self.assertTrue(any("RADV" in message for message in self.messages()))
+
+    def test_unknown_kernel_driver_is_absent(self):
+        documents, _ = fixtures.load_scenario("synthetic-radv-lavapipe")
+        self.add_node("renderD128", "226:128\n", driver=None)
+        with self.run_with(documents):
+            self.assert_absent_with("kernel driver unknown")
+
+    def test_one_unreadable_device_doesnt_hide_another(self):
+        """Review item 5: a failure reading the lavapipe device (index 1) must not stop RADV
+        (index 0) from counting, and it is logged."""
+        documents, _ = fixtures.load_scenario("synthetic-radv-lavapipe")
+
+        def second_fails(command, cwd, index):
+            if index == 1:
+                return subprocess.CompletedProcess(command, 3, "", "ERROR_INITIALIZATION_FAILED")
+            with open(os.path.join(cwd, "device.json"), "w", encoding="utf-8") as handle:
+                json.dump(documents[index], handle)
+            return subprocess.CompletedProcess(command, 0, "", "")
+        with self.run_with(documents, on_json=second_fails):
+            self.assertEqual(vulkan_probe.main(["renderD128"]), vulkan_probe.ACCEPT)
+        self.assertTrue(any("exited 3" in message and "doesn't count" in message for message in self.messages()))
+
+    def test_unreadable_output_file_marks_only_that_device(self):
+        documents, _ = fixtures.load_scenario("synthetic-radv-lavapipe")
+
+        def second_unreadable(command, cwd, index):
+            path = os.path.join(cwd, "device.json")
+            if index == 1:
+                with open(path, "wb") as handle:
+                    handle.write(b"\xff\xfe not utf-8")
+            else:
+                with open(path, "w", encoding="utf-8") as handle:
+                    json.dump(documents[index], handle)
+            return subprocess.CompletedProcess(command, 0, "", "")
+        with self.run_with(documents, on_json=second_unreadable):
+            self.assertEqual(vulkan_probe.main(["renderD128"]), vulkan_probe.ACCEPT)
+        self.assertTrue(any("can't read vulkaninfo's output" in message for message in self.messages()))
+
+    def test_unreadable_qualifying_device_is_absent(self):
+        documents, _ = fixtures.load_scenario("synthetic-radv-lavapipe")
+
+        def first_fails(command, cwd, index):
+            if index == 0:
+                return subprocess.CompletedProcess(command, -11, "", "")
+            with open(os.path.join(cwd, "device.json"), "w", encoding="utf-8") as handle:
+                json.dump(documents[index], handle)
+            return subprocess.CompletedProcess(command, 0, "", "")
+        with self.run_with(documents, on_json=first_fails):
+            self.assert_absent_with("killed by signal 11")
+
+    def test_deadline_stops_reading_further_devices(self):
+        documents, _ = fixtures.load_scenario("synthetic-radv-lavapipe")
+        calls = []
+
+        def slow_first(command, cwd, index):
+            calls.append(index)
+            vulkan_probe.DEADLINE = -1.0  # the deadline passes while device 0 is read
+            with open(os.path.join(cwd, "device.json"), "w", encoding="utf-8") as handle:
+                json.dump(documents[index], handle)
+            return subprocess.CompletedProcess(command, 0, "", "")
+        with self.run_with(documents, on_json=slow_first), mock.patch.object(vulkan_probe, "DEADLINE", 45.0):
+            # Device 0 (RADV) was read before the deadline passed, so it still counts.
+            self.assertEqual(vulkan_probe.main(["renderD128"]), vulkan_probe.ACCEPT)
+        self.assertEqual(calls, [0])
+        self.assertTrue(any("devices not read: 1" in message for message in self.messages()))
 
     def test_vulkaninfo_missing(self):
         with mock.patch.object(vulkan_probe.shutil, "which", return_value=None):
@@ -166,6 +250,13 @@ class InProcessProbeTest(ProbeHarness):
         self.assertNotIn("VK_ICD_FILENAMES", cleaned)
         self.assertNotIn("MESA_VK_DEVICE_SELECT", cleaned)
         self.assertEqual(cleaned["MESA_SHADER_CACHE_DISABLE"], "true")
+        self.assertEqual(cleaned["VK_LOADER_LAYERS_DISABLE"], "~implicit~")
+
+    def test_probe_writes_nothing(self):
+        """Tripwire, not a guarantee: only the unit's ExecStart= writes the accept marker, so
+        the probe module never names /run."""
+        with open(vulkan_probe.__file__, "r", encoding="utf-8") as handle:
+            self.assertNotIn("/run", handle.read())
 
 
 @unittest.skipIf(os.name != "posix", "needs a POSIX shell to stand in for vulkaninfo")

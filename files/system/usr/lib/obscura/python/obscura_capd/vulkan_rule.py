@@ -9,8 +9,12 @@ GPU. One render node qualifies only if some Vulkan device, as described by
    device (lavapipe, which has no DRM node) can never be credited to a node.
 2. deviceType is INTEGRATED_GPU or DISCRETE_GPU. CPU, VIRTUAL_GPU and OTHER never count.
 3. The device's own apiVersion is at least 1.3. The instance version is not used.
-4. It isn't a software rasterizer (llvmpipe/lavapipe, SwiftShader), judged by driverID,
-   driverName and deviceName. Missing driver properties mean it doesn't count.
+4. Its driver isn't a software rasterizer (llvmpipe/lavapipe, SwiftShader) or a layer over
+   a host API (Venus, Dozen), judged by driverID, driverName and deviceName. Venus can pass
+   the host GPU's deviceType through, so the type check alone can't catch it. Missing driver
+   properties mean it doesn't count.
+5. The render node's kernel driver isn't a virtual GPU (virtio_gpu, vmwgfx, vkms, vgem),
+   checked by the probe from sysfs with kernel_driver_reason().
 
 Anything missing or of the wrong type means "doesn't count", never an exception escaping
 to the caller as a pass.
@@ -24,9 +28,15 @@ from obscura_capd import report
 ACCEPTED_TYPES = ("INTEGRATED_GPU", "DISCRETE_GPU")
 # VkPhysicalDeviceType values, for vulkaninfo versions that print numbers.
 DEVICE_TYPES = {0: "OTHER", 1: "INTEGRATED_GPU", 2: "DISCRETE_GPU", 3: "VIRTUAL_GPU", 4: "CPU"}
-# VkDriverId values of software rasterizers (and their names when printed as strings).
-SOFTWARE_DRIVER_IDS = {10: "GOOGLE_SWIFTSHADER", 13: "MESA_LLVMPIPE"}
+# VkDriverId values that never count (and their names when printed as strings): software
+# rasterizers, and drivers layered over a host API in a guest (Venus over virtio-gpu, Dozen
+# over Direct3D 12).
+EXCLUDED_DRIVER_IDS = {10: "GOOGLE_SWIFTSHADER", 13: "MESA_LLVMPIPE", 22: "MESA_VENUS", 23: "MESA_DOZEN"}
 SOFTWARE_NAME = re.compile(r"llvmpipe|lavapipe|swiftshader", re.IGNORECASE)
+# driverName of layered drivers, matched exactly: "Venus" is also an old AMD GPU codename.
+LAYERED_DRIVER_NAMES = ("venus", "dozen")
+# Kernel DRM drivers of virtual GPUs. A render node driven by one never counts.
+VIRTUAL_KERNEL_DRIVERS = ("virtio_gpu", "vmwgfx", "vkms", "vgem")
 MINIMUM_API = (1, 3)
 
 DRIVER_STRUCTS = ("VkPhysicalDeviceDriverProperties", "VkPhysicalDeviceDriverPropertiesKHR",
@@ -144,7 +154,7 @@ def device_from_document(document):
         for struct_name in DRIVER_STRUCTS:
             driver = _single_struct(document, struct_name)
             if driver is not None and ("driverID" in driver or "driverName" in driver):
-                driver_id = _enum_name(driver.get("driverID"), "VK_DRIVER_ID_", SOFTWARE_DRIVER_IDS)
+                driver_id = _enum_name(driver.get("driverID"), "VK_DRIVER_ID_", EXCLUDED_DRIVER_IDS)
                 driver_name = driver.get("driverName") if isinstance(driver.get("driverName"), str) else None
                 break
 
@@ -187,8 +197,10 @@ def judge(device, node):
             return False, label + ": device apiVersion %d.%d is below 1.3" % tuple(device.api)
         if device.driver_id is None and device.driver_name is None:
             return False, label + ": no driver properties"
-        if device.driver_id in SOFTWARE_DRIVER_IDS.values():
-            return False, label + ": software driver " + str(device.driver_id)
+        if device.driver_id in EXCLUDED_DRIVER_IDS.values():
+            return False, label + ": excluded driver " + str(device.driver_id) + " (software or layered over a host API)"
+        if isinstance(device.driver_name, str) and device.driver_name.strip().lower() in LAYERED_DRIVER_NAMES:
+            return False, label + ": excluded driver " + device.driver_name + " (layered over a host API)"
         for text in (device.driver_name, device.name):
             if isinstance(text, str) and SOFTWARE_NAME.search(text):
                 return False, label + ": software rasterizer (" + text + ")"
@@ -212,6 +224,20 @@ def node_qualifies(devices, node):
         return accepted, reasons
     except Exception as error:
         report.failure("vulkan_rule.node_qualifies", error)
+        raise
+
+
+def kernel_driver_reason(driver):
+    """None if render-node kernel driver `driver` may count, else the reason it doesn't. An
+    unknown driver (None or empty) doesn't count: every hardware render node has one."""
+    try:
+        if not isinstance(driver, str) or not driver.strip():
+            return "kernel driver unknown"
+        if driver.strip() in VIRTUAL_KERNEL_DRIVERS:
+            return "kernel driver " + driver.strip() + " is a virtual GPU"
+        return None
+    except Exception as error:
+        report.failure("vulkan_rule.kernel_driver_reason", error)
         raise
 
 

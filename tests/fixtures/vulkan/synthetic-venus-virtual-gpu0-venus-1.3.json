@@ -13,7 +13,7 @@
           "driverVersion": 104865792,
           "vendorID": 4098,
           "deviceID": 29822,
-          "deviceType": "VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU",
+          "deviceType": "VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU",
           "deviceName": "Virtio-GPU Venus (AMD Radeon RX 7800 XT)"
         },
         "VkPhysicalDeviceDriverProperties": {

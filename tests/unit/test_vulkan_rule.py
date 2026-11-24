@@ -8,7 +8,7 @@ from unittest import mock
 import tests  # noqa: F401  (puts obscura_capd on sys.path)
 from obscura_capd import report
 from obscura_capd.vulkan_rule import (SchemaError, decode_api, device_from_document, judge,
-                                      node_qualifies, parse_node_number)
+                                      kernel_driver_reason, node_qualifies, parse_node_number)
 from tests.unit import vulkan_fixtures as fixtures
 
 RENDER_128 = (226, 128)
@@ -27,13 +27,13 @@ def accepted_name(key, node):
 
 class LavapipeNegativeTest(unittest.TestCase):
     """The key negative test: lavapipe reports Vulkan 1.3 in the VMware VM, and it must not
-    count. It uses the real recording from the VM only (build brief §7, C-10), never a
+    count. It uses the real recording from the VM only (build brief §7, C-12), never a
     synthetic stand-in, and it fails until that recording is committed."""
 
     def test_real_vmware_lavapipe_never_counts(self):
         if fixtures.LAVAPIPE_SCENARIO not in fixtures.scenarios():
             self.fail("no real-vmware-lavapipe recording yet. Record it in the VM on the 0.2b image: "
-                      "python3 capture.py <dir outside the repo> --label vmware-lavapipe (C-10), then "
+                      "python3 capture.py <dir outside the repo> --label vmware-lavapipe (C-12), then "
                       "commit the real-vmware-lavapipe-* files with README rows marked real")
         self.assertTrue(fixtures.is_real(fixtures.LAVAPIPE_SCENARIO), "README must mark every file real")
         found, nodes = devices(fixtures.LAVAPIPE_SCENARIO)
@@ -68,7 +68,7 @@ class SyntheticBranchTest(unittest.TestCase):
         self.assertIsNone(accepted_name("synthetic-discrete-integrated", (226, 130)))
 
     def test_rejected_scenarios(self):
-        for key, expected in (("synthetic-venus-virtual", "VIRTUAL_GPU"),
+        for key, expected in (("synthetic-venus-virtual", "MESA_VENUS"),
                               ("synthetic-radv-no-drm-ext", "no VkPhysicalDeviceDrmPropertiesEXT"),
                               ("synthetic-gpu-api-1.2", "below 1.3"),
                               ("synthetic-wrong-type-other", "OTHER")):
@@ -132,6 +132,35 @@ class InlineRuleTest(unittest.TestCase):
         name = {"apiVersion": "1.3.0", "deviceType": "VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU",
                 "deviceName": "llvmpipe (LLVM 20, 256 bits)"}
         self.assertFalse(self.counts(base_document(VkPhysicalDeviceProperties=name)))
+
+    def test_layered_drivers_are_rejected_whatever_the_type(self):
+        """Review item 1: Venus can pass the host's DISCRETE_GPU type through; Dozen too."""
+        for driver in ({"driverID": "VK_DRIVER_ID_MESA_VENUS", "driverName": "x"},
+                       {"driverID": 22, "driverName": "x"},
+                       {"driverID": "VK_DRIVER_ID_MESA_DOZEN", "driverName": "x"},
+                       {"driverID": 23, "driverName": "x"},
+                       {"driverID": "VK_DRIVER_ID_MESA_RADV", "driverName": "venus"},
+                       {"driverID": "VK_DRIVER_ID_MESA_RADV", "driverName": "Dozen"}):
+            with self.subTest(driver):
+                properties = {"apiVersion": "1.3.0", "deviceType": "VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU",
+                              "deviceName": "AMD Radeon RX 7800 XT"}
+                self.assertFalse(self.counts(base_document(VkPhysicalDeviceProperties=properties,
+                                                           VkPhysicalDeviceDriverProperties=driver)))
+
+    def test_venus_codename_in_a_device_name_still_counts(self):
+        """Layered drivers are matched by driverID and exact driverName, never by deviceName:
+        "Venus" is also an old AMD GPU codename."""
+        properties = {"apiVersion": "1.3.0", "deviceType": "VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU",
+                      "deviceName": "AMD Radeon HD 8870M (RADV VENUS)"}
+        self.assertTrue(self.counts(base_document(VkPhysicalDeviceProperties=properties)))
+
+    def test_kernel_driver_reason(self):
+        for driver in ("amdgpu", "i915", "xe", "nouveau", "nvidia-drm"):
+            with self.subTest(driver):
+                self.assertIsNone(kernel_driver_reason(driver))
+        for driver in ("virtio_gpu", "vmwgfx", "vkms", "vgem", None, "", "  "):
+            with self.subTest(driver):
+                self.assertIsNotNone(kernel_driver_reason(driver))
 
     def test_missing_driver_properties_do_not_count(self):
         self.assertFalse(self.counts(base_document(VkPhysicalDeviceDriverProperties=None)))

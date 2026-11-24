@@ -6,7 +6,7 @@
 ## Real and synthetic
 - **`real-*.json`** are recordings from real machines, made with `capture.py`. Only real
   recordings count toward acceptance:
-  - the lavapipe negative test reads `real-vmware-lavapipe.json` and nothing else;
+  - the lavapipe negative test reads the `real-vmware-lavapipe-*` files (`real-vmware-lavapipe-gpu<n>-<driver>-<api>.json` and `real-vmware-lavapipe-nodes.json`) and nothing else;
   - the "vulkan-1.3 present" test reads only `real-*` files marked **real** below, and
     skips until one exists (open item in the build brief).
 - **`synthetic-*.json`** are written by hand from the vulkaninfo schema to exercise the
@@ -45,7 +45,7 @@ nodes). A scenario is real only if every one of its files is marked real.
 | `synthetic-discrete-integrated-gpu0-radv-1.4.json` | synthetic | hand-written, task 0.2b | discrete GPU on renderD128 |
 | `synthetic-discrete-integrated-gpu1-intel-open-source-mesa-driver-1.4.json` | synthetic | hand-written, task 0.2b | integrated GPU on renderD129 |
 | `synthetic-discrete-integrated-nodes.json` | synthetic | hand-written, task 0.2b | render node map |
-| `synthetic-venus-virtual-gpu0-venus-1.3.json` | synthetic | hand-written, task 0.2b | virtio-gpu Venus, `VIRTUAL_GPU` with a DRM node: rejected |
+| `synthetic-venus-virtual-gpu0-venus-1.3.json` | synthetic | hand-written, task 0.2b | virtio-gpu Venus passing the host's `DISCRETE_GPU` type through, with a DRM node: rejected by driver ID `MESA_VENUS` |
 | `synthetic-venus-virtual-gpu1-llvmpipe-1.4.json` | synthetic | hand-written, task 0.2b | lavapipe in the same guest: rejected |
 | `synthetic-venus-virtual-nodes.json` | synthetic | hand-written, task 0.2b | render node map |
 | `synthetic-radv-no-drm-ext-gpu0-radv-1.4.json` | synthetic | hand-written, task 0.2b | a GPU without `VkPhysicalDeviceDrmPropertiesEXT`: rejected |

@@ -9,10 +9,15 @@ so the probe unit becomes active and upholds obscura-cap-vulkan-1.3.target.
 Exit 1: it doesn't, or the probe couldn't tell. systemd then skips the unit (inactive,
 not failed) and the capability stays absent. The reason is always logged.
 
-Fails closed: a missing vulkaninfo, a crash or signal, a non-zero exit, a timeout
-(VULKANINFO_TIMEOUT per call, DEADLINE overall), unparseable or schema-wrong JSON, or an
-unreadable sysfs node all mean absent. It never exits 255, which systemd would count as
-a failure.
+Fails closed: a missing vulkaninfo, a failing `vulkaninfo --summary`, an unreadable
+sysfs node or kernel driver, or a virtual GPU's kernel driver (vulkan_rule) means absent.
+Each Vulkan device is judged on its own: a crash or signal, a non-zero exit, a timeout
+(VULKANINFO_TIMEOUT per call) or unparseable or schema-wrong JSON for one device means
+that device doesn't count, and the others are still judged. Past the overall DEADLINE no
+further devices are read. Every reason is logged. It never exits 255, which systemd would
+count as a failure.
+
+It writes nothing: the unit's ExecStart= writes the accept marker after an exit 0.
 """
 
 import json
@@ -25,7 +30,8 @@ import tempfile
 import time
 
 from obscura_capd import report
-from obscura_capd.vulkan_rule import SchemaError, device_from_document, node_qualifies, parse_node_number
+from obscura_capd.vulkan_rule import (SchemaError, device_from_document, kernel_driver_reason, node_qualifies,
+                                      parse_node_number)
 
 VULKANINFO_TIMEOUT = 10.0   # seconds per vulkaninfo call
 DEADLINE = 45.0             # seconds for the whole probe; the unit's TimeoutStartSec is 90
@@ -41,6 +47,10 @@ ABSENT = 1
 
 class Absent(Exception):
     """An expected reason the capability can't be confirmed. Logged once, then exit 1."""
+
+
+class DeadlineExceeded(Absent):
+    """The overall DEADLINE passed: no further devices are read."""
 
 
 def sysfs_root():
@@ -74,6 +84,25 @@ def node_number(node):
         raise
 
 
+def kernel_driver(node):
+    """The kernel driver bound to render node `node`'s device (DRIVER= in its sysfs uevent),
+    or None if it can't be read."""
+    try:
+        path = os.path.join(sysfs_root(), node, "device", "uevent")
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                lines = handle.read().splitlines()
+        except (OSError, UnicodeDecodeError):
+            return None
+        for line in lines:
+            if line.startswith("DRIVER="):
+                return line[len("DRIVER="):].strip() or None
+        return None
+    except Exception as error:
+        report.failure("vulkan_probe.kernel_driver", error)
+        raise
+
+
 def environment():
     """The process environment without anything that changes which Vulkan drivers load."""
     try:
@@ -81,6 +110,7 @@ def environment():
         for name in CLEARED_ENVIRONMENT:
             cleaned.pop(name, None)
         cleaned["MESA_SHADER_CACHE_DISABLE"] = "true"
+        cleaned["VK_LOADER_LAYERS_DISABLE"] = "~implicit~"
         return cleaned
     except Exception as error:
         report.failure("vulkan_probe.environment", error)
@@ -104,7 +134,7 @@ class Runner:
         try:
             remaining = DEADLINE - (time.monotonic() - self.started)
             if remaining <= 0:
-                raise Absent("probe deadline of " + str(DEADLINE) + " s exceeded")
+                raise DeadlineExceeded("probe deadline of " + str(DEADLINE) + " s exceeded")
             timeout = min(VULKANINFO_TIMEOUT, remaining)
             command = [self.executable] + arguments
             try:
@@ -144,16 +174,20 @@ def device_indices(summary):
 
 
 def read_device(runner, index):
-    """The normalized Device for vulkaninfo device `index`."""
+    """The normalized Device for vulkaninfo device `index`. Raises Absent if this device
+    can't be read; DeadlineExceeded if the overall deadline passed."""
     try:
-        with tempfile.TemporaryDirectory(prefix="obscura-vulkan-probe-") as directory:
-            stdout = runner.run(["--json=" + str(index), "-o", "device.json"], directory)
-            path = os.path.join(directory, "device.json")
-            if os.path.exists(path):
-                with open(path, "r", encoding="utf-8") as handle:
-                    text = handle.read()
-            else:
-                text = stdout
+        try:
+            with tempfile.TemporaryDirectory(prefix="obscura-vulkan-probe-") as directory:
+                stdout = runner.run(["--json=" + str(index), "-o", "device.json"], directory)
+                path = os.path.join(directory, "device.json")
+                if os.path.exists(path):
+                    with open(path, "r", encoding="utf-8") as handle:
+                        text = handle.read()
+                else:
+                    text = stdout
+        except (OSError, UnicodeDecodeError) as error:
+            raise Absent("device " + str(index) + ": can't read vulkaninfo's output: " + str(error)) from error
         try:
             document = json.loads(text)
         except (json.JSONDecodeError, UnicodeDecodeError) as error:
@@ -177,17 +211,36 @@ def probe(node):
         executable = shutil.which("vulkaninfo")
         if executable is None:
             raise Absent("vulkaninfo not found (package vulkan-tools)")
+        driver = kernel_driver(node)
+        driver_reason = kernel_driver_reason(driver)
         runner = Runner(executable, started)
         devices = []
+        unreadable = []
         with tempfile.TemporaryDirectory(prefix="obscura-vulkan-probe-") as directory:
             summary = runner.run(["--summary"], directory)
-        for index in device_indices(summary):
-            devices.append(read_device(runner, index))
+        indices = device_indices(summary)
+        for position, index in enumerate(indices):
+            try:
+                devices.append(read_device(runner, index))
+            except DeadlineExceeded as reason:
+                skipped = ", ".join(str(i) for i in indices[position:])
+                unreadable.append(str(reason) + "; devices not read: " + skipped)
+                break
+            except Absent as reason:
+                unreadable.append(str(reason))
+        for reason in unreadable:
+            report.problem("vulkan-1.3", node + ": " + reason + " (that device doesn't count)", OBSCURA_NODE=node)
 
         accepted, reasons = node_qualifies(devices, number)
+        reasons = reasons + [reason + " (doesn't count)" for reason in unreadable]
+        if driver_reason is not None:
+            # Judged after the Vulkan devices, so the log still says what each one was.
+            report.notice("vulkan-1.3: " + node + " doesn't count: " + driver_reason + "; devices: "
+                          + "; ".join(reasons), OBSCURA_NODE=node)
+            return ABSENT
         if accepted is not None:
-            report.notice("vulkan-1.3: " + node + " qualifies: " + "; ".join(reasons),
-                          OBSCURA_NODE=node, OBSCURA_DEVICE=accepted.name)
+            report.notice("vulkan-1.3: " + node + " qualifies (kernel driver " + str(driver) + "): "
+                          + "; ".join(reasons), OBSCURA_NODE=node, OBSCURA_DEVICE=accepted.name)
             return ACCEPT
         report.notice("vulkan-1.3: " + node + " has no hardware-accelerated Vulkan 1.3 device: "
                       + "; ".join(reasons), OBSCURA_NODE=node)
