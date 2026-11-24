@@ -224,8 +224,9 @@ class Exporter:
         self._log_transition(name, transition)
 
     def _log_transition(self, name, transition):
-        """One journal entry per Added/Removed, so a test can tell after the fact whether a
-        capability ever appeared this boot:
+        """One journal entry per state transition, logged even if emitting Added/Removed
+        failed (that failure is reported separately), so a test can tell after the fact
+        whether a capability ever appeared this boot:
         journalctl -b SYSLOG_IDENTIFIER=obscura-capd OBSCURA_CAPABILITY=<name> OBSCURA_TRANSITION=added"""
         try:
             word = {"added": "present", "removed": "absent"}.get(transition)

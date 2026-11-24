@@ -39,7 +39,7 @@ nodes). A scenario is real only if every one of its files is marked real.
 
 | File | Origin | Source | Purpose |
 |---|---|---|---|
-| `real-vmware-lavapipe-gpu0-llvmpipe-1.4.json` | real | VMware VM on the 0.2b image (vmwgfx, renderD128), Mesa 26.2.7 (LLVM 23.1.5), Vulkan instance 1.4.350, kernel 7.3.4-300.fc45, capture.py 2026-11-24 | lavapipe claiming Vulkan 1.4 with no GPU: never counts (lavapipe negative test, C-10/C-12) |
+| `real-vmware-lavapipe-gpu0-llvmpipe-1.4.json` | real | VMware VM on the 0.2b image (vmwgfx, renderD128), Mesa 26.2.7 (LLVM 23.1.5), Vulkan instance 1.4.350, kernel 7.3.4-300.fc45, capture.py 2026-11-24 | lavapipe claiming Vulkan 1.4 with no GPU: never counts (lavapipe negative test, C-12) |
 | `real-vmware-lavapipe-nodes.json` | real | same recording | render node map: renderD128 on vmwgfx |
 | `synthetic-radv-lavapipe-gpu0-radv-1.4.json` | synthetic | hand-written, task 0.2b | RADV discrete GPU on renderD128: accepted for its own node only |
 | `synthetic-radv-lavapipe-gpu1-llvmpipe-1.4.json` | synthetic | hand-written, task 0.2b | lavapipe alongside it: never counts |

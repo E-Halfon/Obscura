@@ -2,7 +2,7 @@
 
 **Status:** Stage 0 in progress
 **Version:** 3.1
-**Last updated:** 2026-11-23
+**Last updated:** 2026-11-24
 **Companion documents:** CAMERA-OBSCURA-BUILD-BRIEF.md (plan), PACKS.md (pack catalog)
 
 > **If you are an AI assistant reading this at the start of a session:** this document is
@@ -797,6 +797,7 @@ stays inside portable devices (small, ~1 W); the Switch belongs in a home coproc
 | Assistant running shell commands | Typed action API only (§20) |
 | Assistant reading files, web pages, or other input | Input is the Settings text box only (§21) |
 | Unattended automations running confirm-tier actions | Only free-tier actions run without the user (§22) |
+| Probed capability as bare `Upholds=` + `ExecCondition=` (no gate on the target) | `Upholds=` pulls the target in like `Wants=` at every probe start, so a rejecting probe still made `vulkan-1.3` active (VM, 2026-11-23). The target is gated on accept markers instead (§4) |
 
 ---
 

@@ -33,22 +33,15 @@ readonly HERE
 . "$HERE/../lib/stand-in.sh"
 # shellcheck source=SCRIPTDIR/../lib/vm-checks.sh
 . "$HERE/../lib/vm-checks.sh"
+# shellcheck source=SCRIPTDIR/../lib/gate-checks.sh
+. "$HERE/../lib/gate-checks.sh"
 SKIPPED=0
 
-# Journal reads are scoped to this boot explicitly: this kernel boot ID and, since a soft
-# reboot keeps the boot ID (bootc can apply an image that way), only entries since the
-# current PID 1 started. Plain -b matched the previous image's "Reached target" lines in
-# the VM pass of 2026-11-24.
+# Journal reads are scoped to this boot by its kernel boot ID, printed in the results.
 BOOT_ID=$(tr -d - </proc/sys/kernel/random/boot_id)
 readonly BOOT_ID
-USERSPACE_START=$(systemctl show --timestamp=unix -P UserspaceTimestamp 2>/dev/null || true)
-readonly USERSPACE_START
 journal_this_boot() {
-    if [[ "$USERSPACE_START" == @* ]]; then
-        journalctl -q --no-pager _BOOT_ID="$BOOT_ID" --since "$USERSPACE_START" "$@"
-    else
-        journalctl -q --no-pager _BOOT_ID="$BOOT_ID" "$@"
-    fi
+    journalctl -q --no-pager _BOOT_ID="$BOOT_ID" "$@"
 }
 
 # Each test runs in its own subshell (run_test), so failures are recorded in a file
@@ -368,28 +361,34 @@ readonly X86_TARGET=/usr/lib/systemd/system/obscura-cap-x86-64-v3.target
 readonly VULKAN_TARGET=obscura-cap-vulkan-1.3.target
 readonly VULKAN_PROBE=obscura-cap-vulkan-1.3-probe
 readonly VULKAN_MARKERS=/run/obscura-cap/vulkan-1.3
-readonly UNIT_STARTED=39f53479d3a045ac8e11786248231fbf   # SD_MESSAGE_UNIT_STARTED ("Reached target")
-
-# vulkan_never_active: this boot, the vulkan-1.3 target never entered active, PID 1 never
-# logged reaching it, and capd never announced it (task 0.2b gate; VM pass of 2026-11-23).
+# vulkan_never_active: this boot, the vulkan-1.3 target never became active and capd never
+# announced it (task 0.2b gate). Primary proof: every start job of the target that PID 1
+# logged this boot is the "skipped because of an unmet condition" one, never a real
+# "Reached target" (tests/lib/gate-checks.sh; a skip carries the same MESSAGE_ID, so the
+# text decides). At least one skip must be there, or nothing pulled the target in and the
+# check proves nothing. ActiveEnterTimestamp is secondary: PID 1 may have unloaded the
+# inactive target earlier this boot ("Collecting.", debug-level, so not visible here), and
+# a reloaded target reads 0 whether or not it was ever active. A non-zero value still fails.
 vulkan_never_active() {
+    local verdicts reached skipped announced
+    verdicts=$(gate_verdicts "$VULKAN_TARGET" _BOOT_ID="$BOOT_ID")
+    reached=$(gate_count reached "$verdicts")
+    skipped=$(gate_count skipped "$verdicts")
+    if [ "$reached" = 0 ]; then
+        pass "journal (boot $BOOT_ID): no real 'Reached target $VULKAN_TARGET'"
+    else
+        fail "journal (boot $BOOT_ID): $reached real 'Reached target $VULKAN_TARGET':"
+        gate_lines reached "$verdicts"
+    fi
+    if [ "$skipped" != 0 ]; then
+        pass "journal (boot $BOOT_ID): $skipped start(s) of $VULKAN_TARGET, each skipped because of an unmet condition (the gate said no)"
+    else
+        fail "journal (boot $BOOT_ID): no start of $VULKAN_TARGET was logged, so nothing pulled it in and this check proves nothing (did udev start a probe?)"
+    fi
     if [ "$(systemctl show -P ActiveEnterTimestampMonotonic "$VULKAN_TARGET")" = 0 ]; then
-        pass "$VULKAN_TARGET never entered active this boot (ActiveEnterTimestamp 0)"
+        echo "NOTE: secondary: $VULKAN_TARGET's ActiveEnterTimestamp is 0. Not proof on its own: the target may have been unloaded and reloaded this boot, which the default log level doesn't show"
     else
         fail "$VULKAN_TARGET entered active this boot at $(systemctl show -P ActiveEnterTimestamp "$VULKAN_TARGET")"
-    fi
-    # Journal output is captured before it is searched: under pipefail, grep -q could
-    # SIGPIPE the writer, and the check would read as "not found", a false pass.
-    local structured text description announced matches
-    description=$(systemctl show -P Description "$VULKAN_TARGET")
-    structured=$(journal_this_boot -o short-precise MESSAGE_ID="$UNIT_STARTED" UNIT="$VULKAN_TARGET")
-    text=$(journal_this_boot -o short-precise _PID=1)
-    matches=$(printf '%s\n' "$text" | grep -F -e "Reached target $VULKAN_TARGET" -e "Reached target $description" || true)
-    if [ -n "$structured" ] || [ -n "$matches" ]; then
-        fail "the journal has 'Reached target $VULKAN_TARGET' this boot (boot $BOOT_ID, since ${USERSPACE_START:-boot start}):"
-        printf '%s\n' "$structured" "$matches" | grep . | sort -u | sed 's/^/      /'
-    else
-        pass "no 'Reached target $VULKAN_TARGET' this boot (boot $BOOT_ID, since ${USERSPACE_START:-boot start})"
     fi
     announced=$(journal_this_boot -o short-precise SYSLOG_IDENTIFIER=obscura-capd OBSCURA_CAPABILITY=vulkan-1.3)
     if [[ "$announced" == *"capability present: vulkan-1.3"* ]]; then
@@ -398,16 +397,6 @@ vulkan_never_active() {
     else
         pass "capd never announced Added(vulkan-1.3) this boot"
     fi
-}
-
-# vulkan_gate_evaluated <before>: the target's start job ran and its condition said no
-# since ConditionTimestampMonotonic was <before>. Without this, "never active" would also
-# hold if nothing had pulled the target in at all.
-vulkan_gate_evaluated() {
-    local after
-    after=$(systemctl show -P ConditionTimestampMonotonic "$VULKAN_TARGET")
-    [ "$after" != 0 ] && [ "$after" != "$1" ] \
-        && [ "$(systemctl show -P ConditionResult "$VULKAN_TARGET")" = no ]
 }
 
 # The /proc/cpuinfo spelling of a systemd ConditionCPUFeature= name; empty if the kernel
@@ -536,14 +525,8 @@ test_vulkan_lavapipe() {
     else
         fail "$VULKAN_TARGET is $(systemctl show -P ActiveState "$VULKAN_TARGET")"
     fi
-    # Not even for an instant: run this before vulkan-no-fake restarts any probe.
+    # Not even for an instant, and because the gate said no (at least one logged skip).
     vulkan_never_active
-    # ...and that is because the gate said no, not because nothing pulled the target in.
-    if vulkan_gate_evaluated 0; then
-        pass "$VULKAN_TARGET's start job ran this boot and its condition said no"
-    else
-        fail "$VULKAN_TARGET's condition was never evaluated this boot (ConditionResult=$(systemctl show -P ConditionResult "$VULKAN_TARGET")): did udev start a probe?"
-    fi
     units=$(systemctl --failed --no-legend --plain | grep -v '^$' || true)
     if [ -z "$units" ]; then
         pass "no failed units"
@@ -584,7 +567,7 @@ test_vulkan_lavapipe() {
 # an accept marker that only an accepting probe writes).
 readonly NO_FAKE_ROUNDS=20
 test_vulkan_no_fake() {
-    local node round before unit watch_file probe_ts
+    local node round before unit watch_file probe_ts round_cursor verdicts held pins
     if systemctl start "$VULKAN_TARGET" 2>/dev/null; then
         fail "manual start of $VULKAN_TARGET was allowed"
     else
@@ -599,41 +582,69 @@ test_vulkan_no_fake() {
     trap cleanup_no_fake EXIT
     sleep 1
 
+    # Keep the target and probes loaded during the restarts, so their properties are those
+    # of the objects that ran (tests/lib/gate-checks.sh). Checked per round.
+    pins="$VULKAN_TARGET"
+    for node in $(render_nodes); do
+        pins="$pins $VULKAN_PROBE@$node.service"
+    done
+    # shellcheck disable=SC2086  # one word per unit
+    if ! gate_pin $pins; then
+        fail "couldn't pin $pins, so the property checks below are skipped"
+    fi
+
     for node in $(render_nodes); do
         unit="$VULKAN_PROBE@$node.service"
+        held=0
         for round in $(seq 1 "$NO_FAKE_ROUNDS"); do
             before=$(systemctl show -P ConditionTimestampMonotonic "$VULKAN_TARGET")
             # Skipped starts count toward the default start limit (5 in 10 s), and a
             # start-limit-hit probe would stay failed; reset-failed resets the limiter.
             systemctl reset-failed "$unit" 2>/dev/null || true
+            round_cursor=$(journalctl -n 1 --show-cursor -q --no-pager | sed -n 's/^-- cursor: //p')
             systemctl restart "$unit" || true
             # restart waits only for the probe's job; the target's job (pulled in by
             # Upholds=, ordered after the probe) may still be queued.
             if ! stand_in_wait_idle "$VULKAN_TARGET" 15; then
                 fail "$node round $round: $VULKAN_TARGET still has a job after 15 s"
             fi
-            if ! vulkan_gate_evaluated "$before"; then
-                fail "$node round $round: the gate wasn't evaluated (ConditionResult=$(systemctl show -P ConditionResult "$VULKAN_TARGET")), so this round proves nothing"
+            # Primary: the journal of this start.
+            verdicts=$(gate_verdicts "$VULKAN_TARGET" --after-cursor "$round_cursor")
+            if [ "$(gate_count reached "$verdicts")" != 0 ]; then
+                fail "$node round $round: a real 'Reached target $VULKAN_TARGET':"
+                gate_lines reached "$verdicts"
             fi
-            if [ "$(systemctl show -P ActiveState "$VULKAN_TARGET")" != inactive ] \
-                || [ "$(systemctl show -P ActiveEnterTimestampMonotonic "$VULKAN_TARGET")" != 0 ]; then
-                fail "$node round $round: $VULKAN_TARGET became active"
-            fi
-            if [ "$(systemctl show -P Result "$unit")" != exec-condition ]; then
-                fail "$node round $round: $unit Result=$(systemctl show -P Result "$unit"), expected exec-condition"
+            if [ "$(gate_count skipped "$verdicts")" = 0 ]; then
+                fail "$node round $round: no 'skipped because of an unmet condition' entry for $VULKAN_TARGET, so the gate wasn't evaluated and this round proves nothing"
             fi
             if [ -e "$VULKAN_MARKERS/$node" ]; then
                 fail "$node round $round: the rejecting probe left $VULKAN_MARKERS/$node"
             fi
+            # Secondary: properties, only if they belong to the objects that ran this start.
+            if gate_pin_held "$unit" "$VULKAN_TARGET" "$round_cursor" "$before"; then
+                held=$((held + 1))
+                if [ "$(systemctl show -P ActiveState "$VULKAN_TARGET")" != inactive ] \
+                    || [ "$(systemctl show -P ActiveEnterTimestampMonotonic "$VULKAN_TARGET")" != 0 ]; then
+                    fail "$node round $round: $VULKAN_TARGET became active"
+                fi
+                if [ "$(systemctl show -P ConditionResult "$VULKAN_TARGET")" != no ]; then
+                    fail "$node round $round: ConditionResult=$(systemctl show -P ConditionResult "$VULKAN_TARGET"), expected no"
+                fi
+                if [ "$(systemctl show -P Result "$unit")" != exec-condition ]; then
+                    fail "$node round $round: $unit Result=$(systemctl show -P Result "$unit"), expected exec-condition"
+                fi
+            else
+                fail "$node round $round: the pin didn't hold (InvocationID or ConditionTimestamp doesn't match this start), so the property checks were skipped"
+            fi
         done
-        pass "$NO_FAKE_ROUNDS restarts of $unit: the gate said no each time, the target never active"
+        pass "$NO_FAKE_ROUNDS restarts of $unit: each logged a skipped start of the target, no real 'Reached target'; pin held in $held/$NO_FAKE_ROUNDS rounds"
     done
 
     # A probe for a node that doesn't exist waits for its device and never runs. Its start
     # still queues a start of the target (Upholds=), which must wait behind it (Before=)
     # instead of starting at once: in the old design this left vulkan-1.3 active for an hour.
     unit="$VULKAN_PROBE@renderD999.service"
-    before=$(systemctl show -P ConditionTimestampMonotonic "$VULKAN_TARGET")
+    round_cursor=$(journalctl -n 1 --show-cursor -q --no-pager | sed -n 's/^-- cursor: //p')
     systemctl start --no-block "$unit" 2>/dev/null || true
     sleep 2
     if [ -n "$(systemctl list-jobs --no-legend --plain "$VULKAN_TARGET")" ]; then
@@ -644,16 +655,19 @@ test_vulkan_no_fake() {
     probe_ts=$(systemctl show -P ExecMainStartTimestampMonotonic "$unit")
     systemctl stop "$unit" 2>/dev/null || true
     stand_in_wait_idle "$VULKAN_TARGET" 15 || fail "$VULKAN_TARGET still has a job 15 s after cancelling $unit"
-    if [ "$probe_ts" = 0 ] && [ ! -e "$VULKAN_MARKERS/renderD999" ] \
-        && [ "$(systemctl show -P ActiveState "$VULKAN_TARGET")" = inactive ] \
-        && [ "$(systemctl show -P ActiveEnterTimestampMonotonic "$VULKAN_TARGET")" = 0 ]; then
-        if vulkan_gate_evaluated "$before"; then
-            pass "a probe for a nonexistent node never ran; the target's job ran after it and the gate said no"
+    verdicts=$(gate_verdicts "$VULKAN_TARGET" --after-cursor "$round_cursor")
+    if [ "$(gate_count reached "$verdicts")" != 0 ]; then
+        fail "a real 'Reached target $VULKAN_TARGET' after starting $unit:"
+        gate_lines reached "$verdicts"
+    elif [ "$probe_ts" = 0 ] && [ ! -e "$VULKAN_MARKERS/renderD999" ] \
+        && [ "$(systemctl show -P ActiveState "$VULKAN_TARGET")" = inactive ]; then
+        if [ "$(gate_count skipped "$verdicts")" != 0 ]; then
+            pass "a probe for a nonexistent node never ran; the target's job ran after it and was skipped (unmet condition)"
         else
-            pass "a probe for a nonexistent node never ran; the target's job was cancelled with it"
+            pass "a probe for a nonexistent node never ran; the target's job was cancelled with it (no start logged)"
         fi
     else
-        fail "$unit ran, left a marker, or made $VULKAN_TARGET active"
+        fail "$unit ran, left a marker, or $VULKAN_TARGET is $(systemctl show -P ActiveState "$VULKAN_TARGET")"
     fi
 
     sleep 1
@@ -675,6 +689,7 @@ cleanup_no_fake() {
     local job
     kill "${NO_FAKE_WATCH:-}" 2>/dev/null
     rm -f "${NO_FAKE_WATCH_FILE:-}"
+    gate_unpin
     systemctl stop "$VULKAN_PROBE@renderD999.service" 2>/dev/null
     # BindsTo= also queued a start of the nonexistent device; cancel it instead of letting
     # it time out after ~90 s.
@@ -701,7 +716,7 @@ video_device_units() {
     systemctl list-units --type=device --state=plugged --plain --no-legend 'dev-video*' | awk '{print $1}' | sort
 }
 test_unplug_mechanism() {
-    local run=/run/systemd/system device elapsed=0 before after waited start
+    local run=/run/systemd/system device elapsed=0 before after waited start stable_since now now_units
     if [ ! -t 0 ]; then
         skip "interactive: needs you to connect and disconnect the webcam in VMware"
     fi
@@ -715,7 +730,24 @@ test_unplug_mechanism() {
 
     echo "Disconnect the webcam now (VM > Removable Devices > <camera> > Disconnect), then press Enter."
     read -r _
+    # udev may still be removing the webcam's nodes: wait until the plugged set has been
+    # the same for 2 s (at most UNPLUG_APPEAR_SECONDS), else a node that is still listed
+    # and then comes back wouldn't count as new.
     before=$(video_device_units)
+    start=$(date +%s%3N)
+    stable_since=$start
+    while true; do
+        sleep 0.5
+        now_units=$(video_device_units)
+        now=$(date +%s%3N)
+        if [ "$now_units" != "$before" ]; then
+            before=$now_units
+            stable_since=$now
+        fi
+        if [ $((now - stable_since)) -ge 2000 ] || [ $((now - start)) -ge $((UNPLUG_APPEAR_SECONDS * 1000)) ]; then
+            break
+        fi
+    done
     echo "Connect the webcam (VM > Removable Devices > <camera> > Connect), then press Enter."
     read -r _
     # The C920 takes up to ~5 s after Connect; poll up to UNPLUG_APPEAR_SECONDS.

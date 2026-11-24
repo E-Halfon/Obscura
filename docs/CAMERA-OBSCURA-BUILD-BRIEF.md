@@ -610,18 +610,32 @@ P-1…P-7 cover the user-files half of T-70. Its Neo half stays open until 0.28.
 CI (`capd-tests`): the acceptance rule against `tests/fixtures/vulkan/` (synthetic
 scenarios for each branch; real recordings only for acceptance), the probe's fail-closed
 cases, `systemd-analyze condition` for every x86-64-v3 line on the runner, the
-probed-capability gate on the runner's real systemd (`tests/ci/upholds-gate.sh`: 20
-rejecting probe starts never make the stand-in target active and each one evaluated the
-gate; a control run without the gate must show the old bug), and lints for the units. CI
-runs systemd 255 (Ubuntu 24.04), the image 262; the VM tests cover 262. VM tests are in `tests/vm/capabilities.sh` (C-9 was already bus-policy, so these
+probed-capability gate on the runner's real systemd (`tests/ci/upholds-gate.sh`: for each
+of 20 rejecting probe starts, PID 1's journal logs the stand-in target's start job as
+skipped by its condition and never as a real "Reached target"; a control run without the
+gate must show a real "Reached target", the old bug), and lints for the units. CI runs
+systemd 255 (Ubuntu 24.04), the image 262; the VM tests cover 262.
+
+**How "never active" is proven** (`tests/lib/gate-checks.sh`, used by CI and the VM tests).
+The primary proof is the journal. A condition-skipped start job finishes as `done` and
+carries the same `MESSAGE_ID` as a real start (`39f53479…`), so the verdict is decided by
+the text ("was skipped because of an unmet condition" vs "Reached target"; classifier
+`tests/lib/journal_verdict.py`, tested against entries recorded on 255). Properties
+(`ActiveEnterTimestamp` 0, `ConditionResult`, `Result`) are secondary and only checked
+while the unit is known to have stayed loaded: PID 1 garbage-collects an unreferenced
+inactive unit, and a reloaded one reads as never active (CI diagnostic run, 2026-11-24).
+The tests pin units with `Manager.RefUnit` and check the pin held (the probe's
+`InvocationID` matches the journal, the target's `ConditionTimestamp` advanced) before
+reading properties. Debug-level messages ("changed dead -> active", "Collecting.") are
+used only in `--debug` diagnostic runs, never for a verdict. VM tests are in `tests/vm/capabilities.sh` (C-9 was already bus-policy, so these
 start at C-10).
 
 | ID | Test | Pass condition |
 |---|---|---|
 | C-10 | x86-64-v3 on the VM | Present exactly when `/proc/cpuinfo` has the v2+v3 flags; every condition line agrees with its flag; glibc's `ld.so` agrees; nothing failed |
 | C-11 | Boot ordering | capd starts only after the x86-64-v3 target's conditions ran |
-| **C-12** | **lavapipe doesn't count** | lavapipe reports Vulkan ≥ 1.3, yet `vulkan-1.3` is absent, and never was this boot: the target's `ActiveEnterTimestamp` is 0, this boot's journal (boot ID, since the current PID 1 started) has no "Reached target" for it, and capd never announced it; each render-node probe is skipped (`exec-condition`) with a logged reason and no accept marker; no failed units. The same run records `real-vmware-lavapipe-*` with `capture.py`; the CI negative test reads only that recording (committed 2026-11-24) |
-| C-13 | Can't be faked | Manual start of the target refused; restarting each probe 20 times never activates the target, and each restart evaluated the gate (`ConditionResult=no`); `obscura-cap watch` sees no `+vulkan-1.3`; a probe for a nonexistent node never runs, and the target's start job waits behind it instead of starting |
+| **C-12** | **lavapipe doesn't count** | lavapipe reports Vulkan ≥ 1.3, yet `vulkan-1.3` is absent, and never was this boot: this boot's journal (by boot ID) logs at least one start of the target, every one skipped by its condition and none a real "Reached target", and capd never announced it (`ActiveEnterTimestamp` 0 is reported as a secondary note); each render-node probe is skipped (`exec-condition`) with a logged reason and no accept marker; no failed units. The same run records `real-vmware-lavapipe-*` with `capture.py`; the CI negative test reads only that recording (committed 2026-11-24) |
+| C-13 | Can't be faked | Manual start of the target refused; for each of 20 restarts of each probe, the journal logs the target's start job as skipped by its condition and never a real "Reached target"; with the units pinned, the properties agree (`ConditionResult=no`, never active); `obscura-cap watch` sees no `+vulkan-1.3`; a probe for a nonexistent node never runs, and the target's start job waits behind it instead of starting |
 | C-14 | Unplug, no reboot (mechanism) | A stand-in of the probe and target (`tests/lib/stand-in.sh`), bound to the webcam, writes its marker and activates the target, then stops within 5 s of unplugging, marker gone |
 | P-2 | pack-wine on the VM (after 0.2b) | Insufficient hardware, `vulkan-1.3` absent rather than unknown |
 | D-1 | Desktop: both present | `x86-64-v3` and `vulkan-1.3` present; pack-wine Ready |
