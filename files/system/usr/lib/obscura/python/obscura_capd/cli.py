@@ -4,7 +4,9 @@ Never required of users (ARCHITECTURE.md §19); the GUI reads the same DBus inte
 
   obscura-cap list          present capabilities, one per line
   obscura-cap vocabulary    every declared capability
-  obscura-cap has NAME      exit 0 if present, 1 if absent, 2 on error or unknown name
+  obscura-cap has NAME      prints "present" (exit 0) or "absent" (exit 1); on an unknown
+                            name or any error, prints nothing on stdout, says why on
+                            stderr, and exits 2
   obscura-cap watch         print +NAME / -NAME as capabilities appear and disappear
 
 Requires dasbus and PyGObject (Linux only).
@@ -33,7 +35,7 @@ def _parse(argv):
         commands = parser.add_subparsers(dest="command", required=True)
         commands.add_parser("list", help="present capabilities")
         commands.add_parser("vocabulary", help="every declared capability")
-        has = commands.add_parser("has", help="exit 0 if present, 1 if absent, 2 on error")
+        has = commands.add_parser("has", help='print "present" (exit 0) or "absent" (exit 1); exit 2 on error')
         has.add_argument("name")
         commands.add_parser("watch", help="print +NAME / -NAME as capabilities change")
         return parser.parse_args(argv)
@@ -108,7 +110,9 @@ def main(argv=None):
             from obscura_capd.errors import UnknownCapabilityError
 
             try:
-                return EXIT_PRESENT if proxy.Has(arguments.name) else EXIT_ABSENT
+                present = bool(proxy.Has(arguments.name))
+                print("present" if present else "absent", flush=True)
+                return EXIT_PRESENT if present else EXIT_ABSENT
             except UnknownCapabilityError:
                 _error("unknown capability: " + arguments.name + " (see 'obscura-cap vocabulary')")
                 return EXIT_ERROR

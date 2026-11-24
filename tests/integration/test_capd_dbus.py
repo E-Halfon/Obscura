@@ -168,10 +168,12 @@ class CapdHarness(dbusmock.DBusTestCase if dbus is not None else unittest.TestCa
         return sorted(str(path) for path in manager.GetManagedObjects())
 
     def cli_has(self, name):
-        return subprocess.run(
+        """(exit status, stdout) of `obscura-cap has NAME`."""
+        result = subprocess.run(
             [sys.executable, "-P", "-m", "obscura_capd.cli", "has", name],
             env=self.environment(), capture_output=True, text=True, timeout=TIMEOUT,
-        ).returncode
+        )
+        return result.returncode, result.stdout
 
 
 
@@ -197,9 +199,9 @@ class CapdDBusTest(CapdHarness):
             self.manager().Has("windows-apps")
         self.assertEqual(caught.exception.get_dbus_name(),
                          "org.obscura.Capabilities1.Error.UnknownCapability")
-        self.assertEqual(self.cli_has("battery"), 0)
-        self.assertEqual(self.cli_has("camera"), 1)
-        self.assertEqual(self.cli_has("nonsense"), 2)
+        self.assertEqual(self.cli_has("battery"), (0, "present\n"))
+        self.assertEqual(self.cli_has("camera"), (1, "absent\n"))
+        self.assertEqual(self.cli_has("nonsense"), (2, ""))
 
     def test_hotplug_signals_once_per_change(self):
         self.start_capd()
@@ -297,6 +299,13 @@ class CapdDBusTest(CapdHarness):
         self.assertFalse(self.manager().Has("vulkan-1.3"))
         self.assertNotIn(path, self.managed_paths())
         self.assertIsNone(self.capd.poll(), "capd must keep running")
+
+        # Each transition is in capd's log, so the VM tests can check a boot after the fact.
+        self.stop_process(self.capd)
+        output = self.capd.stdout.read()
+        for transition in ("added", "removed"):
+            self.assertTrue(any("OBSCURA_CAPABILITY=vulkan-1.3" in line and "OBSCURA_TRANSITION=" + transition in line
+                                for line in output.splitlines()), output)
 
     def test_failed_target_is_absent(self):
         self.set_target("obscura-cap-camera.target", "failed", announce=False)
