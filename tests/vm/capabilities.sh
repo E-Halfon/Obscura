@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Camera Obscura: capability framework VM tests (build-brief tasks 0.2 and 0.2b).
+# Camera Obscura: capability framework VM tests (build-brief tasks 0.2, 0.2b and 0.2c).
 # Run inside a VMware Workstation VM booted from the built image, as root:
 #   sudo tests/vm/capabilities.sh <test> [args]
 # See tests/vm/README.md for VMware setup. Exit codes: 0 pass, 1 fail, 77 skipped.
@@ -20,8 +20,13 @@
 #   vulkan-lavapipe        C-12: vulkan-1.3 absent although lavapipe reports 1.3 (the key negative test)
 #   vulkan-no-fake         C-13: vulkan-1.3 can't be started by hand or by a bogus probe
 #   unplug                 C-14: unplugging the last device stops an upheld target (interactive, webcam)
+#   loopback               C-15: streaming into OBS's v4l2loopback leaves camera absent (task 0.2c;
+#                          webcam disconnected; skips with a physical camera present)
+#   loopback-webcam        C-16: with the loopback streaming, camera follows the webcam only (interactive)
+#   rule-crosscheck        C-17: the udev rule evaluator agrees with real udev on every video node
 #   all                    boot-order, state, restart, semantics, no-fake, bus-policy, mcelog,
-#                          x86-64-v3, vulkan-lavapipe, vulkan-no-fake (non-interactive)
+#                          x86-64-v3, vulkan-lavapipe, vulkan-no-fake, loopback, rule-crosscheck
+#                          (non-interactive)
 
 set -Eeuo pipefail
 trap 'echo "ERROR: ${FUNCNAME[0]:-main} line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
@@ -67,18 +72,52 @@ kind_of() {
     sed -nE 's/^kind[[:space:]]*=[[:space:]]*"([a-z]+)".*/\1/p' "$VOCABULARY_DIR/$1.toml"
 }
 
+# Drivers of virtual V4L2 devices, which never count as a camera. Must equal the DRIVERS==
+# list of 70-obscura-cap-camera.rules (tests/unit/test_camera_rule.py checks).
+readonly VIRTUAL_V4L_DRIVERS="vivid v4l2loopback"
+readonly V4L_ID=/usr/lib/udev/v4l_id
+
+# node_caps <node>: ID_V4L_CAPABILITIES as v4l_id reports it now, not udev's database,
+# which goes stale when a node's capabilities change without an event (v4l2loopback 0.15.4
+# sends none when a writer starts or stops; VM recon of 2026-11-24).
+node_caps() {
+    "$V4L_ID" "$1" 2>/dev/null | sed -n 's/^ID_V4L_CAPABILITIES=//p' || true
+}
+
+# chain_drivers <sysfs path>: the drivers bound to the device and each parent, one per line.
+chain_drivers() {
+    local dir=$1
+    while [[ "$dir" == /sys/devices/* ]]; do
+        if [ -L "$dir/driver" ]; then
+            basename "$(readlink -f "$dir/driver")"
+        fi
+        dir=$(dirname "$dir")
+    done
+}
+
 # capture_nodes: the /dev/video* nodes that are real cameras, one "<node> <sysfs path>"
-# per line: ID_V4L_CAPABILITIES has :capture: and the device isn't under
-# /sys/devices/virtual (v4l2loopback, vivid). C-1's ground truth for `camera`.
+# per line, by the same criteria as the rule but read independently of udev: v4l_id
+# reports :capture:, the device isn't under /sys/devices/virtual (v4l2loopback), and no
+# driver in its chain is in VIRTUAL_V4L_DRIVERS (vivid sits under /sys/devices/platform).
+# C-1's ground truth for `camera`.
 capture_nodes() {
-    local node caps path
+    local node caps path driver virtual
     for node in /dev/video*; do
         if [ ! -e "$node" ]; then
             continue
         fi
-        caps=$(udevadm info --query=property --property=ID_V4L_CAPABILITIES --value --name="$node" 2>/dev/null || true)
+        caps=$(node_caps "$node")
         path=$(readlink -f "/sys/class/video4linux/${node#/dev/}" 2>/dev/null || true)
-        if [[ "$caps" == *:capture:* ]] && [[ "$path" != /sys/devices/virtual/* ]]; then
+        if [[ "$caps" != *:capture:* ]] || [[ "$path" == /sys/devices/virtual/* ]]; then
+            continue
+        fi
+        virtual=0
+        for driver in $(chain_drivers "$path"); do
+            if [[ " $VIRTUAL_V4L_DRIVERS " == *" $driver "* ]]; then
+                virtual=1
+            fi
+        done
+        if [ "$virtual" = 0 ]; then
             echo "$node $path"
         fi
     done
@@ -147,11 +186,11 @@ test_state() {
             cameras=$(capture_nodes)
             if [ -n "$cameras" ]; then
                 expected=0
-                echo "      camera ground truth: capture nodes outside /sys/devices/virtual:"
+                echo "      camera ground truth: capture nodes of physical devices:"
                 printf '%s\n' "$cameras" | sed 's/^/        /'
             else
                 expected=1
-                echo "      camera ground truth: no /dev/video* node with :capture: outside /sys/devices/virtual"
+                echo "      camera ground truth: no /dev/video* node of a physical device reports :capture: (v4l_id)"
             fi
             if [[ "$present_list" == *",camera,"* ]] && [ "$expected" = 1 ]; then
                 fail "--present lists camera, but no real capture node exists"
@@ -749,14 +788,38 @@ readonly UNPLUG_APPEAR_SECONDS=15
 # comparison use this. It lists with --all (the form that showed dev-video1.device in the
 # VM pass of 2026-11-24, where --type=device --state=plugged printed nothing) and keeps
 # only active/plugged rows, so dead units left from an earlier connect don't count and
-# the same node reappearing is new. Only capture nodes get a unit (TAGS=:systemd: from
-# 70-obscura-cap-camera.rules); a webcam's metadata node and OBS's output node don't.
+# the same node reappearing is new. Only capture nodes of physical devices get a unit
+# (CURRENT_TAGS=:systemd: from 70-obscura-cap-camera.rules); a webcam's metadata node and
+# OBS's loopback, idle or streaming, don't.
 readonly VIDEO_UNITS_CMD="systemctl list-units --all --plain --no-legend 'dev-video*'"
 video_device_units() {
     eval "$VIDEO_UNITS_CMD" | awk '$1 ~ /^dev-video[0-9]+\.device$/ && $3 == "active" && $4 == "plugged" {print $1}' | sort
 }
+# wait_stable_units <max seconds>: video_device_units once it has been the same for 2 s
+# (or after <max seconds>). udev may still be removing a webcam's nodes after Disconnect,
+# and a node that is still listed and then comes back wouldn't count as new. C-14, C-16.
+wait_stable_units() {
+    local limit_ms=$(($1 * 1000)) current now_units start now stable_since
+    current=$(video_device_units)
+    start=$(date +%s%3N)
+    stable_since=$start
+    while true; do
+        sleep 0.5
+        now_units=$(video_device_units)
+        now=$(date +%s%3N)
+        if [ "$now_units" != "$current" ]; then
+            current=$now_units
+            stable_since=$now
+        fi
+        if [ $((now - stable_since)) -ge 2000 ] || [ $((now - start)) -ge "$limit_ms" ]; then
+            break
+        fi
+    done
+    printf '%s\n' "$current"
+}
+
 test_unplug_mechanism() {
-    local run=/run/systemd/system device elapsed=0 before after waited start stable_since now now_units
+    local run=/run/systemd/system device elapsed=0 before after waited start
     if [ ! -t 0 ]; then
         skip "interactive: needs you to connect and disconnect the webcam in VMware"
     fi
@@ -770,24 +833,7 @@ test_unplug_mechanism() {
 
     echo "Disconnect the webcam now (VM > Removable Devices > <camera> > Disconnect), then press Enter."
     read -r _
-    # udev may still be removing the webcam's nodes: wait until the plugged set has been
-    # the same for 2 s (at most UNPLUG_APPEAR_SECONDS), else a node that is still listed
-    # and then comes back wouldn't count as new.
-    before=$(video_device_units)
-    start=$(date +%s%3N)
-    stable_since=$start
-    while true; do
-        sleep 0.5
-        now_units=$(video_device_units)
-        now=$(date +%s%3N)
-        if [ "$now_units" != "$before" ]; then
-            before=$now_units
-            stable_since=$now
-        fi
-        if [ $((now - stable_since)) -ge 2000 ] || [ $((now - start)) -ge $((UNPLUG_APPEAR_SECONDS * 1000)) ]; then
-            break
-        fi
-    done
+    before=$(wait_stable_units "$UNPLUG_APPEAR_SECONDS")
     echo "Connect the webcam (VM > Removable Devices > <camera> > Connect), then press Enter."
     read -r _
     # The C920 takes up to ~5 s after Connect; poll up to UNPLUG_APPEAR_SECONDS.
@@ -869,6 +915,282 @@ cleanup_unplug() {
     return 0
 }
 
+# C-15, C-16, C-17 (task 0.2c): a virtual camera never counts. Aurora ships v4l2loopback
+# ("OBS Virtual Camera", exclusive_caps=Y): idle it is an output node, but while a writer
+# streams into it v4l_id reports :capture:, and the 0.2b rule counted it on the next change
+# event (VM recon of 2026-11-24). The producer is ffmpeg, already in the image, writing a
+# test pattern. v4l2loopback 0.15.4 sent no uevent when ffmpeg started or stopped, so the
+# tests force a change event and don't depend on one.
+readonly CAMERA_TARGET=obscura-cap-camera.target
+readonly LOOPBACK_CAPTURE_SECONDS=10
+CROSSCHECK="$HERE/../lib/rule_crosscheck.py"
+readonly CROSSCHECK
+LOOPBACK_NODE=""
+LOOPBACK_DIR=""
+LOOPBACK_FFMPEG_PID=""
+LOOPBACK_MONITOR_PID=""
+LOOPBACK_WATCH_PID=""
+
+# loopback_node: the first v4l2loopback node (/dev/videoN), or nothing.
+loopback_node() {
+    local path
+    if [ ! -d /sys/module/v4l2loopback ]; then
+        return 0
+    fi
+    for path in /sys/devices/virtual/video4linux/video*; do
+        if [ -e "$path" ]; then
+            echo "/dev/${path##*/}"
+            return 0
+        fi
+    done
+}
+
+# udev_db <node> <property>: the property's value in udev's database.
+udev_db() {
+    udevadm info --query=property --property="$2" --value --name="$1" 2>/dev/null || true
+}
+
+# loopback_begin <node>: start udevadm monitor and obscura-cap watch (logs in LOOPBACK_DIR)
+# and set the EXIT trap. The caller must be a test's subshell.
+loopback_begin() {
+    LOOPBACK_NODE=$1
+    LOOPBACK_DIR=$(mktemp -d)
+    trap cleanup_loopback EXIT
+    udevadm monitor --kernel --udev --property --subsystem-match=video4linux >"$LOOPBACK_DIR/monitor" 2>&1 &
+    LOOPBACK_MONITOR_PID=$!
+    obscura-cap watch >"$LOOPBACK_DIR/watch" 2>&1 &
+    LOOPBACK_WATCH_PID=$!
+    sleep 1
+}
+
+# loopback_stream: start ffmpeg writing a test pattern into LOOPBACK_NODE and wait for
+# v4l_id to report :capture: (the precondition; without it nothing below means anything).
+# Returns 1, after a fail with ffmpeg's output, if it doesn't within LOOPBACK_CAPTURE_SECONDS.
+loopback_stream() {
+    local waited=0
+    if ! command -v ffmpeg >/dev/null 2>&1; then
+        fail "ffmpeg is not in the image (Aurora ships it); can't stream into $LOOPBACK_NODE"
+        return 1
+    fi
+    ffmpeg -hide_banner -loglevel error -nostdin -re -f lavfi -i testsrc2=size=640x480:rate=30 \
+        -pix_fmt yuyv422 -f v4l2 "$LOOPBACK_NODE" >"$LOOPBACK_DIR/ffmpeg" 2>&1 &
+    LOOPBACK_FFMPEG_PID=$!
+    while [[ "$(node_caps "$LOOPBACK_NODE")" != *:capture:* ]]; do
+        if [ "$waited" -ge $((LOOPBACK_CAPTURE_SECONDS * 10)) ] || ! kill -0 "$LOOPBACK_FFMPEG_PID" 2>/dev/null; then
+            fail "$LOOPBACK_NODE never reported :capture: while ffmpeg wrote to it; ffmpeg said:"
+            sed 's/^/        /' "$LOOPBACK_DIR/ffmpeg" || true
+            return 1
+        fi
+        sleep 0.1
+        waited=$((waited + 1))
+    done
+    pass "ffmpeg streams into $LOOPBACK_NODE: v4l_id reports $(node_caps "$LOOPBACK_NODE") after ~$((waited * 100)) ms"
+}
+
+# loopback_stop: stop ffmpeg and wait for it to exit (up to 5 s).
+loopback_stop() {
+    local waited=0
+    kill "$LOOPBACK_FFMPEG_PID" 2>/dev/null || true
+    while kill -0 "$LOOPBACK_FFMPEG_PID" 2>/dev/null && [ "$waited" -lt 50 ]; do
+        sleep 0.1
+        waited=$((waited + 1))
+    done
+    LOOPBACK_FFMPEG_PID=""
+}
+
+# natural_change_events: kernel change events for video4linux in the monitor log that
+# udevadm trigger didn't synthesize (no SYNTH_UUID).
+natural_change_events() {
+    awk -v RS= '/^KERNEL\[[^]]*\] change/ && !/SYNTH_UUID=/ {n++} END {print n+0}' "$LOOPBACK_DIR/monitor"
+}
+
+# loopback_not_counted <context>: force a change event on LOOPBACK_NODE, then check that
+# udev saw :capture: and still didn't tag it, and that camera is absent.
+loopback_not_counted() {
+    local context=$1 syspath caps tags wants
+    syspath=$(readlink -f "/sys/class/video4linux/${LOOPBACK_NODE#/dev/}")
+    udevadm trigger --action=change --settle "$syspath"
+    caps=$(udev_db "$LOOPBACK_NODE" ID_V4L_CAPABILITIES)
+    tags=$(udev_db "$LOOPBACK_NODE" CURRENT_TAGS)
+    wants=$(udev_db "$LOOPBACK_NODE" SYSTEMD_WANTS)
+    if [[ "$caps" != *:capture:* ]]; then
+        fail "$context: after a change event udev has $LOOPBACK_NODE as '$caps', not :capture:, so this proves nothing"
+    fi
+    if [[ "$tags" == *:systemd:* ]] || [[ " $wants " == *" $CAMERA_TARGET "* ]]; then
+        fail "$context: udev tagged the loopback (CURRENT_TAGS=$tags SYSTEMD_WANTS=$wants)"
+    else
+        pass "$context: change event with $caps, no systemd tag and no SYSTEMD_WANTS (CURRENT_TAGS=$tags)"
+    fi
+    camera_absent "$context"
+}
+
+# camera_absent <context>: has camera says absent and the target is inactive.
+camera_absent() {
+    if [ "$(has_status camera)" = 1 ] && [ "$(systemctl show -P ActiveState "$CAMERA_TARGET")" = inactive ]; then
+        pass "$1: camera absent, $CAMERA_TARGET inactive"
+    else
+        fail "$1: camera $(obscura-cap has camera 2>&1 || true), $CAMERA_TARGET $(systemctl show -P ActiveState "$CAMERA_TARGET")"
+    fi
+}
+
+# crosscheck <args>: tests/lib/rule_crosscheck.py; pass if the evaluator agrees with udev.
+crosscheck() {
+    local output status=0
+    output=$(python3 -I "$CROSSCHECK" "$@" 2>&1) || status=$?
+    printf '%s\n' "$output" | sed 's/^/      /'
+    if [ "$status" = 0 ]; then
+        pass "rule evaluator agrees with udev ($*)"
+    else
+        fail "rule evaluator and udev disagree, or a verdict is unknown ($*)"
+    fi
+}
+
+# watch_count <+camera|-camera>: how often capd announced it since loopback_begin.
+watch_count() {
+    grep -cx -- "$1" "$LOOPBACK_DIR/watch" || true
+}
+
+# C-15: with no physical camera, streaming into the loopback leaves camera absent, before
+# and after a change event and after the stream stops. On the 0.2b image this fails
+# (camera present after the change event): the bug reproduced.
+test_loopback() {
+    local node cursor verdicts natural
+    node=$(loopback_node)
+    if [ -z "$node" ]; then
+        skip "no v4l2loopback node (Aurora loads v4l2loopback for OBS; is it blacklisted?)"
+    fi
+    if [ -n "$(capture_nodes)" ]; then
+        skip "a physical camera is connected; disconnect it (loopback-webcam covers both)"
+    fi
+    cursor=$(journalctl -n 1 --show-cursor -q --no-pager | sed -n 's/^-- cursor: //p')
+    loopback_begin "$node"
+    camera_absent "before streaming"
+    if ! loopback_stream; then
+        return 0
+    fi
+    sleep 2
+    natural=$(natural_change_events)
+    echo "      natural change events since ffmpeg started: $natural (0 with v4l2loopback 0.15.4; the rule doesn't rely on them)"
+    camera_absent "streaming, before any forced event"
+    loopback_not_counted "streaming"
+    crosscheck "$node"
+    echo "      C-1 (state) while streaming:"
+    test_state
+
+    loopback_stop
+    sleep 2
+    echo "      after ffmpeg stopped: v4l_id $(node_caps "$node"), udev db $(udev_db "$node" ID_V4L_CAPABILITIES), natural change events $(natural_change_events)"
+    camera_absent "after the stream stopped"
+
+    verdicts=$(gate_verdicts "$CAMERA_TARGET" --after-cursor "$cursor")
+    gate_check_unknown "journal for $CAMERA_TARGET" "$verdicts"
+    if [ "$(gate_count reached "$verdicts")" = 0 ]; then
+        pass "no 'Reached target $CAMERA_TARGET' in the journal during the test"
+    else
+        fail "the journal has a real 'Reached target $CAMERA_TARGET':"
+        gate_lines reached "$verdicts"
+    fi
+    sleep 1
+    if ! kill -0 "$LOOPBACK_WATCH_PID" 2>/dev/null; then
+        fail "obscura-cap watch exited early, so it couldn't have seen an Added(camera)"
+    elif [ "$(watch_count +camera)" = 0 ]; then
+        pass "capd never announced Added(camera)"
+    else
+        fail "capd announced Added(camera) $(watch_count +camera) time(s)"
+    fi
+}
+
+# C-16 (interactive): the loopback streams the whole time; camera follows the C920 only.
+test_loopback_webcam() {
+    local node elapsed cameras
+    if [ ! -t 0 ]; then
+        skip "interactive: needs you to connect and disconnect the webcam in VMware"
+    fi
+    node=$(loopback_node)
+    if [ -z "$node" ]; then
+        skip "no v4l2loopback node (Aurora loads v4l2loopback for OBS; is it blacklisted?)"
+    fi
+    echo "Disconnect the webcam now (VM > Removable Devices > <camera> > Disconnect), then press Enter."
+    read -r _
+    wait_stable_units 15 >/dev/null
+    if [ -n "$(capture_nodes)" ]; then
+        fail "a physical capture node is still present after Disconnect:"
+        capture_nodes | sed 's/^/        /'
+        return 0
+    fi
+    loopback_begin "$node"
+    if ! loopback_stream; then
+        return 0
+    fi
+    loopback_not_counted "streaming, webcam disconnected"
+
+    echo "Connect the webcam (VM > Removable Devices > <camera> > Connect), then press Enter."
+    read -r _
+    if elapsed=$(wait_until 0 camera 15); then
+        pass "camera present ${elapsed} ms after Enter"
+    else
+        fail "camera not present within 15 s of Connect"
+    fi
+    cameras=$(capture_nodes)
+    if [ -n "$cameras" ] && ! printf '%s\n' "$cameras" | grep -q "^$node "; then
+        pass "ground truth lists only the webcam: $(printf '%s' "$cameras" | cut -d' ' -f1 | tr '\n' ' ')"
+    else
+        fail "ground truth with the webcam connected: '${cameras}'"
+    fi
+    if [[ "$(node_caps "$node")" == *:capture:* ]]; then
+        pass "the loopback still reports :capture: beside the webcam"
+    else
+        fail "the loopback stopped reporting :capture: (ffmpeg exited?)"
+    fi
+    crosscheck --action change
+
+    echo "Disconnect the webcam, then press Enter."
+    read -r _
+    if elapsed=$(wait_until 1 camera 5); then
+        pass "camera absent ${elapsed} ms after Enter, with the loopback still streaming"
+    else
+        fail "camera still present 5 s after Disconnect"
+    fi
+    if kill -0 "$LOOPBACK_FFMPEG_PID" 2>/dev/null && [[ "$(node_caps "$node")" == *:capture:* ]]; then
+        pass "ffmpeg still streaming at the end"
+    else
+        fail "ffmpeg stopped during the test, so the last check proves less"
+    fi
+    sleep 1
+    if [ "$(watch_count +camera)" = 1 ] && [ "$(watch_count -camera)" = 1 ]; then
+        pass "exactly one Added(camera) and one Removed(camera)"
+    else
+        fail "signals: $(watch_count +camera) Added, $(watch_count -camera) Removed (expected 1 each)"
+    fi
+}
+
+# C-17: the evaluator agrees with real udev on every node present now, for change and add
+# events (real: a triggered event and the database it left; tests/lib/rule_crosscheck.py).
+test_rule_crosscheck() {
+    if [ -z "$(compgen -G '/dev/video*' || true)" ]; then
+        skip "no /dev/video* nodes"
+    fi
+    crosscheck --action change
+    crosscheck --action add
+}
+
+# EXIT trap of the loopback tests' subshell: stop ffmpeg, the monitor and the watch, and
+# send one change event so udev's database matches the idle loopback again (forced events
+# while streaming left :capture: there). Never fails (see cleanup_no_fake).
+cleanup_loopback() {
+    trap - ERR
+    set +e
+    if [ -n "$LOOPBACK_FFMPEG_PID" ]; then
+        loopback_stop
+    fi
+    kill "$LOOPBACK_MONITOR_PID" "$LOOPBACK_WATCH_PID" 2>/dev/null
+    if [ -n "$LOOPBACK_NODE" ]; then
+        udevadm trigger --action=change --settle "/sys/class/video4linux/${LOOPBACK_NODE#/dev/}" 2>/dev/null
+    fi
+    rm -rf "$LOOPBACK_DIR"
+    return 0
+}
+
 # run_test <function> [args]: runs one test in a subshell with set -e in force.
 # Calling a function as `f || status=$?` would switch errexit off inside it, so a failing
 # command (e.g. systemctl restart) would go unnoticed. Here errexit is turned off only in
@@ -918,6 +1240,9 @@ main() {
         vulkan-lavapipe) run_test test_vulkan_lavapipe ;;
         vulkan-no-fake) run_test test_vulkan_no_fake ;;
         unplug) run_test test_unplug_mechanism ;;
+        loopback) run_test test_loopback ;;
+        loopback-webcam) run_test test_loopback_webcam ;;
+        rule-crosscheck) run_test test_rule_crosscheck ;;
         all)
             run_test test_boot_order
             run_test test_state "$@"
@@ -929,6 +1254,8 @@ main() {
             run_test test_x86_64_v3
             run_test test_vulkan_lavapipe
             run_test test_vulkan_no_fake
+            run_test test_loopback
+            run_test test_rule_crosscheck
             ;;
         *) echo "unknown test: $test" >&2; exit 1 ;;
     esac

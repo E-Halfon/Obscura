@@ -1,0 +1,46 @@
+{
+  "action": "add",
+  "devpath": "/devices/platform/vivid.0/video4linux/video2",
+  "kernel": "video2",
+  "subsystem": "video4linux",
+  "properties": {
+    "DEVPATH": "/devices/platform/vivid.0/video4linux/video2",
+    "DEVNAME": "/dev/video2",
+    "MAJOR": "81",
+    "MINOR": "2",
+    "SUBSYSTEM": "video4linux",
+    "ID_V4L_VERSION": "2",
+    "ID_V4L_PRODUCT": "vivid",
+    "ID_V4L_CAPABILITIES": ":video_output:audio:"
+  },
+  "fresh": {
+    "ID_V4L_VERSION": "2",
+    "ID_V4L_PRODUCT": "vivid",
+    "ID_V4L_CAPABILITIES": ":video_output:audio:"
+  },
+  "parents": [
+    {
+      "kernel": "video2",
+      "subsystem": "video4linux",
+      "driver": null,
+      "attrs": {
+        "name": "vivid-000-vid-out",
+        "index": "1"
+      }
+    },
+    {
+      "kernel": "vivid.0",
+      "subsystem": "platform",
+      "driver": "vivid",
+      "attrs": {
+        "modalias": "platform:vivid"
+      }
+    },
+    {
+      "kernel": "platform",
+      "subsystem": null,
+      "driver": null,
+      "attrs": {}
+    }
+  ]
+}

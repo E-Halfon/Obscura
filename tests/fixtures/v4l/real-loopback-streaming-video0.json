@@ -1,0 +1,32 @@
+{
+  "action": "change",
+  "devpath": "/devices/virtual/video4linux/video0",
+  "kernel": "video0",
+  "subsystem": "video4linux",
+  "properties": {
+    "DEVPATH": "/devices/virtual/video4linux/video0",
+    "DEVNAME": "/dev/video0",
+    "MAJOR": "81",
+    "MINOR": "0",
+    "SUBSYSTEM": "video4linux",
+    "ID_V4L_VERSION": "2",
+    "ID_V4L_PRODUCT": "OBS Virtual Camera",
+    "ID_V4L_CAPABILITIES": ":capture:"
+  },
+  "fresh": {
+    "ID_V4L_VERSION": "2",
+    "ID_V4L_PRODUCT": "OBS Virtual Camera",
+    "ID_V4L_CAPABILITIES": ":capture:"
+  },
+  "parents": [
+    {
+      "kernel": "video0",
+      "subsystem": "video4linux",
+      "driver": null,
+      "attrs": {
+        "name": "OBS Virtual Camera",
+        "index": "0"
+      }
+    }
+  ]
+}

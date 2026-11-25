@@ -1,6 +1,9 @@
 # Camera Obscura capability declaration (ARCHITECTURE.md §4, vocabulary in PACKS.md §2).
 # Present while obscura-cap-camera.target is active; absent otherwise.
-# Detected when a video4linux node whose ID_V4L_CAPABILITIES include capture.
+# Detected (70-obscura-cap-camera.rules) when a video4linux node of a physical device can
+# capture: ID_V4L_CAPABILITIES includes :capture:, the device isn't under
+# /sys/devices/virtual, and no driver in its chain is a virtual one (vivid, v4l2loopback).
+# Virtual cameras such as OBS's loopback never count; IR-only sensors do, for now (§11).
 
 [capability]
 name    = "camera"

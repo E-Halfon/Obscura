@@ -1,4 +1,4 @@
-"""The udev rule evaluator (tests/lib/udev_rules.py), the udevadm-test parser of
+"""The udev rule evaluator (tests/lib/udev_rules.py), the udev database parser of
 tests/lib/rule_crosscheck.py, and the v4l fixture recorder (tests/fixtures/v4l/capture.py).
 Task 0.2c."""
 
@@ -147,47 +147,45 @@ class RecordToEventTest(unittest.TestCase):
         self.assertEqual(udev_rules.event_from_record(record, "add")["action"], "add")
 
 
-UDEVADM_255 = """\
-DEVPATH=/devices/virtual/video4linux/video0
+# udevadm info --query=property for the OBS loopback after a forced change event while
+# ffmpeg streamed, 0.2b rule (VM recon of 2026-11-24, systemd 262), trimmed.
+INFO_STREAMING_0_2B = """DEVPATH=/devices/virtual/video4linux/video0
 DEVNAME=/dev/video0
 SUBSYSTEM=video4linux
 ID_V4L_CAPABILITIES=:capture:
 SYSTEMD_WANTS=obscura-cap-camera.target
-TAGS=:systemd:uaccess:
-CURRENT_TAGS=:systemd:
+TAGS=:systemd:seat:uaccess:
+CURRENT_TAGS=:systemd:uaccess:seat:
 """
 
-UDEVADM_SECTIONS = """\
-Properties:
-  DEVPATH=/devices/pci0000:00/usb1/1-1/1-1:1.0/video4linux/video1
-  ID_V4L_CAPABILITIES=:capture:
-  SYSTEMD_WANTS=obscura-cap-camera.target
-Tags:
-  systemd
-  uaccess
-Run programs:
-  none
+# The same node after the next event with the rule no longer matching: TAGS keeps systemd.
+INFO_STALE_TAGS = """DEVPATH=/devices/virtual/video4linux/video0
+ID_V4L_CAPABILITIES=:video_output:
+TAGS=:systemd:seat:uaccess:
+CURRENT_TAGS=:uaccess:seat:
 """
 
 
-class UdevadmTestParserTest(unittest.TestCase):
-    def test_bare_layout_prefers_current_tags(self):
-        properties, tags = crosscheck.parse_udevadm_test(UDEVADM_255)
-        self.assertEqual(tags, {"systemd"})
-        self.assertEqual(properties["SYSTEMD_WANTS"], "obscura-cap-camera.target")
-        self.assertEqual(properties["ID_V4L_CAPABILITIES"], ":capture:")
+class DatabaseParserTest(unittest.TestCase):
+    """rule_crosscheck.py reads real udev's verdict from the database after an event."""
 
-    def test_sectioned_layout(self):
-        properties, tags = crosscheck.parse_udevadm_test(UDEVADM_SECTIONS)
-        self.assertEqual(tags, {"systemd", "uaccess"})
-        self.assertIn("video1", properties["DEVPATH"])
+    def test_tagged_and_wanted(self):
+        properties, tags = crosscheck.parse_db(INFO_STREAMING_0_2B)
+        self.assertEqual(tags, {"systemd", "uaccess", "seat"})
+        self.assertTrue(crosscheck.wanted(properties, tags, "obscura-cap-camera.target"))
 
-    def test_tags_fall_back_to_tags_without_current_tags(self):
-        _, tags = crosscheck.parse_udevadm_test("DEVPATH=/x\nTAGS=:systemd:\n")
-        self.assertEqual(tags, {"systemd"})
+    def test_sticky_tags_do_not_count(self):
+        properties, tags = crosscheck.parse_db(INFO_STALE_TAGS)
+        self.assertNotIn("systemd", tags)
+        self.assertFalse(crosscheck.wanted(properties, tags, "obscura-cap-camera.target"))
 
-    def test_no_property_block_is_unknown(self):
-        self.assertEqual(crosscheck.parse_udevadm_test("Usage: udevadm test ...\n"), (None, None))
+    def test_wants_without_the_tag_does_not_count(self):
+        text = "DEVPATH=/x\nSYSTEMD_WANTS=obscura-cap-camera.target\nCURRENT_TAGS=:seat:\n"
+        properties, tags = crosscheck.parse_db(text)
+        self.assertFalse(crosscheck.wanted(properties, tags, "obscura-cap-camera.target"))
+
+    def test_no_devpath_is_unknown(self):
+        self.assertEqual(crosscheck.parse_db("Unknown device\n"), (None, None))
 
 
 class CaptureTest(unittest.TestCase):

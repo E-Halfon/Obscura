@@ -1,0 +1,91 @@
+{
+  "action": "add",
+  "devpath": "/devices/pci0000:00/0000:00:11.0/0000:02:03.0/usb2/2-1/2-1:1.0/video4linux/video2",
+  "kernel": "video2",
+  "subsystem": "video4linux",
+  "properties": {
+    "DEVPATH": "/devices/pci0000:00/0000:00:11.0/0000:02:03.0/usb2/2-1/2-1:1.0/video4linux/video2",
+    "DEVNAME": "/dev/video2",
+    "MAJOR": "81",
+    "MINOR": "2",
+    "SUBSYSTEM": "video4linux",
+    "ID_V4L_VERSION": "2",
+    "ID_V4L_PRODUCT": "HD Pro Webcam C920",
+    "ID_V4L_CAPABILITIES": ":",
+    "ID_BUS": "usb",
+    "ID_MODEL_ID": "08e5",
+    "ID_VENDOR_ID": "046d",
+    "ID_USB_INTERFACE_NUM": "00",
+    "ID_USB_DRIVER": "uvcvideo"
+  },
+  "fresh": {
+    "ID_V4L_VERSION": "2",
+    "ID_V4L_PRODUCT": "HD Pro Webcam C920",
+    "ID_V4L_CAPABILITIES": ":"
+  },
+  "parents": [
+    {
+      "kernel": "video2",
+      "subsystem": "video4linux",
+      "driver": null,
+      "attrs": {
+        "name": "HD Pro Webcam C920",
+        "index": "1"
+      }
+    },
+    {
+      "kernel": "2-1:1.0",
+      "subsystem": "usb",
+      "driver": "uvcvideo",
+      "attrs": {
+        "bInterfaceClass": "0e",
+        "bInterfaceSubClass": "01",
+        "bInterfaceNumber": "00",
+        "modalias": "usb:v046Dp08E5d0021dcEFdsc02dp01ic0Eisc01ip00in00"
+      }
+    },
+    {
+      "kernel": "2-1",
+      "subsystem": "usb",
+      "driver": "usb",
+      "attrs": {
+        "idVendor": "046d",
+        "idProduct": "08e5",
+        "product": "HD Pro Webcam C920"
+      }
+    },
+    {
+      "kernel": "usb2",
+      "subsystem": "usb",
+      "driver": "usb",
+      "attrs": {
+        "idVendor": "1d6b",
+        "idProduct": "0002",
+        "product": "EHCI Host Controller",
+        "manufacturer": "Linux 7.3.4-300.fc45.x86_64 ehci_hcd"
+      }
+    },
+    {
+      "kernel": "0000:02:03.0",
+      "subsystem": "pci",
+      "driver": "ehci-pci",
+      "attrs": {
+        "modalias": "pci:v000015ADd00000770sv000015ADsd00000770bc0Csc03i20"
+      }
+    },
+    {
+      "kernel": "0000:00:11.0",
+      "subsystem": "pci",
+      "driver": null,
+      "attrs": {
+        "modalias": "pci:v000015ADd00000790sv000015ADsd00000790bc06sc04i01"
+      }
+    },
+    {
+      "kernel": "pci0000:00",
+      "subsystem": null,
+      "driver": null,
+      "attrs": {}
+    }
+  ]
+}

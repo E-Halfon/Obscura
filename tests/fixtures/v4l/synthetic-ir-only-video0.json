@@ -1,0 +1,76 @@
+{
+  "action": "add",
+  "devpath": "/devices/pci0000:00/0000:00:14.0/usb3/3-6/3-6:1.2/video4linux/video0",
+  "kernel": "video0",
+  "subsystem": "video4linux",
+  "properties": {
+    "DEVPATH": "/devices/pci0000:00/0000:00:14.0/usb3/3-6/3-6:1.2/video4linux/video0",
+    "DEVNAME": "/dev/video0",
+    "SUBSYSTEM": "video4linux",
+    "ID_V4L_VERSION": "2",
+    "ID_V4L_PRODUCT": "Integrated IR Camera",
+    "ID_V4L_CAPABILITIES": ":capture:",
+    "ID_BUS": "usb",
+    "ID_VENDOR_ID": "0bda",
+    "ID_MODEL_ID": "5634",
+    "ID_USB_DRIVER": "uvcvideo",
+    "ID_USB_INTERFACE_NUM": "02"
+  },
+  "fresh": {
+    "ID_V4L_VERSION": "2",
+    "ID_V4L_PRODUCT": "Integrated IR Camera",
+    "ID_V4L_CAPABILITIES": ":capture:"
+  },
+  "parents": [
+    {
+      "kernel": "video0",
+      "subsystem": "video4linux",
+      "driver": null,
+      "attrs": {
+        "name": "Integrated IR Camera: Integrate",
+        "index": "0"
+      }
+    },
+    {
+      "kernel": "3-6:1.2",
+      "subsystem": "usb",
+      "driver": "uvcvideo",
+      "attrs": {
+        "bInterfaceClass": "0e",
+        "bInterfaceSubClass": "01",
+        "bInterfaceNumber": "02"
+      }
+    },
+    {
+      "kernel": "3-6",
+      "subsystem": "usb",
+      "driver": "usb",
+      "attrs": {
+        "idVendor": "0bda",
+        "idProduct": "5634",
+        "product": "Integrated IR Camera"
+      }
+    },
+    {
+      "kernel": "usb3",
+      "subsystem": "usb",
+      "driver": "usb",
+      "attrs": {
+        "idVendor": "1d6b",
+        "idProduct": "0002"
+      }
+    },
+    {
+      "kernel": "0000:00:14.0",
+      "subsystem": "pci",
+      "driver": "xhci_hcd",
+      "attrs": {}
+    },
+    {
+      "kernel": "pci0000:00",
+      "subsystem": null,
+      "driver": null,
+      "attrs": {}
+    }
+  ]
+}
