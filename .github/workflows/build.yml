@@ -142,7 +142,7 @@ jobs:
           sudo podman exec gate journalctl -q --no-pager -o verbose _PID=1 \
             MESSAGE_ID=39f53479d3a045ac8e11786248231fbf | grep -A12 obscura-test || true
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:
           name: gate-on-image-journal
