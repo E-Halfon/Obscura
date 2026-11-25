@@ -1075,7 +1075,9 @@ test_loopback() {
     loopback_not_counted "streaming"
     crosscheck "$node"
     echo "      C-1 (state) while streaming:"
-    test_state
+    # The baseline: nothing present, camera from ground truth (explicit, so shellcheck sees
+    # test_state called with arguments; SC2120).
+    test_state --present ""
 
     loopback_stop
     sleep 2

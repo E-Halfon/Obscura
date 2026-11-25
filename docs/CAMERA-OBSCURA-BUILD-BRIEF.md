@@ -328,7 +328,7 @@ accept drift. Shipping beats purity.
 | 0.1 | **Universal-image skeleton:** BlueBuild recipe on Universal Blue Aurora (`stable`), signed image builds, boots on the desktop | — | 3 |
 | 0.2 | **Capability module framework** (udev → systemd → DBus) — ✅ **done** (PR #2, 2026-11-22; open VM tests tracked in §7, "Stage 0 — capability framework") | 0.1 | 3 |
 | 0.2b | **Static capabilities:** `x86-64-v3` and `vulkan-1.3` (notes below the table). Needed for `pack-wine` to reach Ready — ✅ **done** (PR #5, 2026-11-24; open items in §7, "Stage 0 — static capabilities") | 0.2 | 2 |
-| 0.2c | **`camera` counts hardware only** (hardening: a streaming v4l2loopback node must not count; notes below the table) | 0.2 | 1 |
+| 0.2c | **`camera` counts hardware only** (a streaming v4l2loopback node must not count; notes below the table) — ✅ **done** (PR #7, 2026-11-24; results in §7, "Stage 0 — static capabilities") | 0.2 | 1 |
 | 0.3 | **KDE Plasma shell:** strip, theme, Windows-style layout | 0.1 | 2 |
 | 0.4 | Wine + binfmt_misc dispatch, `.exe` → window — **delivered as `pack-wine`** | 0.3, 0.21 | 3 |
 | 0.5 | Wine sandbox: bubblewrap, no-network default | 0.4 | 2 |
@@ -698,7 +698,29 @@ run in VMware Workstation:
 CI was green on that commit: `capd-tests`, and `bluebuild` including `gate-on-image` on
 systemd 262.
 
-**Open items** (they stay open after 0.2b is marked done):
+**Result (2026-11-24).** Task 0.2c passed on the branch image, built from `6454270`
+(tag `6454270-45`) and run in VMware Workstation with the C920 passed through and Aurora's
+v4l2loopback ("OBS Virtual Camera"):
+- C-15 `loopback` on the **0.2b image** (before the fix): failed as intended. After a
+  forced change event while ffmpeg streamed, and after ffmpeg stopped (v4l_id
+  `:video_output:`, udev db still `:capture:`, 0 natural change events), `camera` was
+  present, its target active, the journal had a real "Reached target
+  obscura-cap-camera.target", and capd announced `Added(camera)` once;
+- `capabilities.sh all` on the 0.2c image (C-1, C-5 to C-13, C-15, C-17): all checks
+  passed, 0 skipped;
+- C-16 `loopback-webcam`: `camera` absent while streaming with the webcam disconnected;
+  present 95 ms after Connect, with only `/dev/video1` in the ground truth; the evaluator
+  agreed with udev on video0, video1 and video2; absent 105 ms after Disconnect with the
+  stream still running; exactly one `Added` and one `Removed`;
+- C-14 `unplug`: all checks passed.
+
+C-3 (`hotplug-camera`) wasn't part of this pass; C-16 and C-14 covered connecting and
+disconnecting the webcam on this image. On `6454270`, `bluebuild` including
+`gate-on-image` (with `udevadm verify` on systemd 262) was green; `capd-tests` passed the
+unit tests and `udevadm verify` (systemd 255) but failed shellcheck (SC2120, the new
+`test_state` call in C-15), fixed in the commit that marks 0.2c done.
+
+**Open items** (they stay open after 0.2b and 0.2c are marked done):
 - **vulkan-1.3 present on real recordings** (RADV/ANV, discrete + integrated). Synthetic
   fixtures don't count. Open until D-2 records them with `capture.py` (a Fedora live USB
   works); until then `test_present_on_real_hardware` skips. If a real recording on
@@ -708,9 +730,8 @@ systemd 262.
   probe's `DeviceAllow=char-drm` blocks, so it reads absent (fails safe). NVK needs only
   DRM. Decide when the desktop GPU is chosen: allow `char-nvidia*`, or require NVK.
 - **D-1 to D-3** need the desktop (with T-50).
-- **Task 0.2c:** `camera` must not count a streaming v4l2loopback node (§6, 0.2c notes).
-  The fix is on branch `0.2c-camera-hardware-only`; open until C-15 to C-17 pass on its
-  image.
+- **IR-only cameras count as `camera`** (task 0.2c, ARCHITECTURE.md §11). Revisit if a
+  target device's only capture nodes are IR, or a pack needs colour video.
 - **The OS-updater decision** (§6, "Open decision: the OS updater"). Until it's made,
   test VMs disable `uupd.timer`.
 - **CI and image systemd versions differ:** the runner has 255 (Ubuntu 24.04) and the
