@@ -1,0 +1,52 @@
+{
+  "action": "add",
+  "devpath": "/devices/pci0000:00/0000:00:05.0/intel_ipu6.isys.40/video4linux/video0",
+  "kernel": "video0",
+  "subsystem": "video4linux",
+  "properties": {
+    "DEVPATH": "/devices/pci0000:00/0000:00:05.0/intel_ipu6.isys.40/video4linux/video0",
+    "DEVNAME": "/dev/video0",
+    "SUBSYSTEM": "video4linux",
+    "ID_V4L_VERSION": "2",
+    "ID_V4L_PRODUCT": "Intel IPU6 ISYS Capture 0",
+    "ID_V4L_CAPABILITIES": ":capture:"
+  },
+  "fresh": {
+    "ID_V4L_VERSION": "2",
+    "ID_V4L_PRODUCT": "Intel IPU6 ISYS Capture 0",
+    "ID_V4L_CAPABILITIES": ":capture:"
+  },
+  "parents": [
+    {
+      "kernel": "video0",
+      "subsystem": "video4linux",
+      "driver": null,
+      "attrs": {
+        "name": "Intel IPU6 ISYS Capture 0",
+        "index": "0"
+      }
+    },
+    {
+      "kernel": "intel_ipu6.isys.40",
+      "subsystem": "auxiliary",
+      "driver": "intel_ipu6_isys.isys",
+      "attrs": {
+        "modalias": "auxiliary:intel_ipu6.isys"
+      }
+    },
+    {
+      "kernel": "0000:00:05.0",
+      "subsystem": "pci",
+      "driver": "intel-ipu6",
+      "attrs": {
+        "modalias": "pci:v00008086d0000A75Dsv00001028sd00000B10bc04sc80i00"
+      }
+    },
+    {
+      "kernel": "pci0000:00",
+      "subsystem": null,
+      "driver": null,
+      "attrs": {}
+    }
+  ]
+}

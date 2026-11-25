@@ -147,7 +147,7 @@ services it activates, and the UI surfaces it exposes. Nothing more.
 | `battery` | `/sys/class/power_supply` | power arbitration, sleep policy | laptop, pocket computer |
 | `touch` | udev: touchscreen | touch input, on-screen keyboard | pocket computer |
 | `gps` | ModemManager or udev | location service (portal-gated) | opt-in |
-| `camera` | udev: UVC or CSI | camera portal, virtual cam source | most |
+| `camera` | udev: capture node of a physical device (UVC or CSI); virtual nodes (v4l2loopback, vivid) never count | camera portal, virtual cam source | most |
 
 Platform availability (`windows-apps`, `android-apps`) is not a capability and is not in
 this table: it comes from packs, not the core (§17.4). The core supplies
@@ -188,6 +188,19 @@ the check fails (or can't run), systemd skips the probe and nothing is failed. T
 is read only by that condition; capd mirrors the target, as for every capability. The
 probe is `BindsTo=` its device, so removing the last qualifying device stops the target
 through `StopWhenUnneeded`, with no reboot.
+
+**`camera` counts hardware only (task 0.2c).** A video4linux node counts when all three
+hold: v4l_id reports `:capture:` (so UVC metadata nodes never count), its device is not
+under `/sys/devices/virtual`, and neither it nor any parent is bound to `vivid` or
+`v4l2loopback`. The second test keeps out OBS's loopback, which has no parent device and
+reports `:capture:` while something streams into it; the third keeps out vivid, a
+platform device. The rule runs on every add and change event and decides from scratch,
+and PID 1 follows `CURRENT_TAGS`, so a node whose capabilities change is re-evaluated.
+udev's database can go stale: v4l2loopback 0.15.4 sends no uevent when a writer starts or
+stops, so a node keeps whatever the last event recorded (in the VM, `:capture:` and the
+systemd tag long after the stream stopped, under the 0.2b rule). Excluding virtual devices
+by where they sit, rather than by their capabilities, is what makes the answer independent
+of when events come. Infrared-only sensors count for now (§11).
 
 **One universal image.** Capabilities are detected at **runtime**, never composed at
 build time. Per-host composition (e.g. one NixOS flake per device) fails the flash-drive
@@ -753,6 +766,23 @@ stays inside portable devices (small, ~1 W); the Switch belongs in a home coproc
     virtual-GPU kernel drivers (virtio_gpu, vmwgfx, vkms, vgem). The probe fails closed
   - capability names may contain dots; object paths escape every byte outside `[a-z0-9]`
     as `_xx` (`vulkan-1.3` → `vulkan_2d1_2e3`)
+- **`camera` counts hardware only (task 0.2c, §4):**
+  - a node counts only if v4l_id reports `:capture:`, its device is not under
+    `/sys/devices/virtual`, and no driver on it or a parent is `vivid` or `v4l2loopback`.
+    Metadata-only nodes never count
+  - the rule is re-evaluated on every add and change event, never restricted to add.
+    v4l2loopback reports `:capture:` while a writer streams (exclusive_caps); the 0.2b rule
+    counted it on the next change event (VM, 2026-11-24). Version 0.15.4 sent no uevent
+    on stream start or stop with ffmpeg, so the exclusion must not depend on one, and it
+    doesn't: it is by device location and driver, not capabilities
+  - vivid is a platform device (`/sys/devices/platform/vivid.0`), so the driver test is
+    what excludes it, not the virtual-path test
+  - **infrared-only sensors count, for now.** Only their formats (`VIDIOC_ENUM_FMT`: GREY,
+    Y8I, Y10, Y16 and no colour format) tell them apart, which udev can't see; every target
+    device with an IR sensor also has an RGB camera. Revisit if a target device's only
+    capture nodes are IR, or a pack needs colour video: then a format probe (vulkan-style,
+    "at least one non-greyscale format") and a separate `ir-camera` capability if face
+    login needs one
 - **GUI-first: no normal task requires a terminal (§19)**
 - **KDE Plasma as the desktop shell, stripped and themed; no custom wlroots compositor**
 - **Typed action API as the single path for changing settings (§20)**

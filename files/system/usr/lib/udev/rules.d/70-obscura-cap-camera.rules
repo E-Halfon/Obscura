@@ -1,10 +1,23 @@
-# Camera Obscura capability: camera (ARCHITECTURE.md §4).
-# Any V4L2 node that can capture video. ID_V4L_CAPABILITIES comes from
-# 60-persistent-v4l.rules, so this file must sort after it. UVC metadata nodes have no
-# capture capability and are skipped. Telling HDMI capture dongles apart
+# Camera Obscura capability: camera (ARCHITECTURE.md §4, §11 "camera counts hardware only").
+# A node counts only if all of these hold:
+#   1. it is a video4linux node whose ID_V4L_CAPABILITIES has :capture:. The value comes
+#      from 60-persistent-v4l.rules (v4l_id reads device_caps), so this file must sort
+#      after it. UVC metadata nodes have no :capture: and never count;
+#   2. its device is not under /sys/devices/virtual. This is what keeps v4l2loopback out
+#      ("OBS Virtual Camera" in Aurora): it registers no parent device, and while a writer
+#      streams into it with exclusive_caps it reports :capture:;
+#   3. neither the node nor any parent is bound to a virtual V4L2 driver. vivid registers a
+#      platform device (/sys/devices/platform/vivid.0), so rule 2 misses it and this line
+#      catches it; it also covers a future v4l2loopback that registers a parent. Keep the
+#      list equal to VIRTUAL_V4L_DRIVERS in tests/vm/capabilities.sh (linted).
+# The rule runs on every add and change event and decides from scratch, so a node whose
+# capabilities change is re-evaluated; PID 1 follows CURRENT_TAGS. Infrared-only sensors
+# count for now (udev can't see formats; §11). Telling HDMI capture dongles apart
 # (capture-device) is a separate capability, not done here.
 ACTION=="remove", GOTO="obscura_cap_camera_end"
 SUBSYSTEM!="video4linux", GOTO="obscura_cap_camera_end"
 ENV{ID_V4L_CAPABILITIES}!="*:capture:*", GOTO="obscura_cap_camera_end"
+DEVPATH=="/devices/virtual/*", GOTO="obscura_cap_camera_end"
+DRIVERS=="vivid|v4l2loopback", GOTO="obscura_cap_camera_end"
 TAG+="systemd", ENV{SYSTEMD_WANTS}+="obscura-cap-camera.target"
 LABEL="obscura_cap_camera_end"

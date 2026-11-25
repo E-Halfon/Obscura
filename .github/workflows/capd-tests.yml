@@ -73,6 +73,14 @@ jobs:
         # control run without the gate that must show the old bug on this systemd.
         if: ${{ !cancelled() }}
         run: sudo bash tests/ci/upholds-gate.sh
+      - name: udev rules pass udevadm verify
+        # The unit tests run the rules through tests/lib/udev_rules.py, which models a
+        # subset of the language; systemd's own checker catches what it doesn't (task 0.2c).
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          udevadm --version
+          udevadm verify --resolve-names=never files/system/usr/lib/udev/rules.d/*.rules
       - name: Shell scripts parse and pass shellcheck
         if: ${{ !cancelled() }}
         run: |

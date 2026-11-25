@@ -1,4 +1,4 @@
-# VM tests: capability framework (tasks 0.2 and 0.2b)
+# VM tests: capability framework (tasks 0.2, 0.2b and 0.2c)
 
 `capabilities.sh` checks the real udev → systemd → DBus path on the built image. The
 unit and DBus integration tests (`tests/unit`, `tests/integration`) run in CI; these
@@ -25,7 +25,7 @@ need the image booted in a VM.
 
 | ID | Command | Setup | Status |
 |---|---|---|---|
-| C-1 | `sudo ./capabilities.sh state` | Baseline: other capabilities absent, no failed units, no capd warnings. `camera` is checked against ground truth, not assumed absent. It must be present if and only if some `/dev/video*` node has `:capture:` in `ID_V4L_CAPABILITIES` and isn't under `/sys/devices/virtual`; the script prints the matching nodes. So a connected webcam passes as present, and Aurora's idle "OBS Virtual Camera" (v4l2loopback, output-only) doesn't count | Ready |
+| C-1 | `sudo ./capabilities.sh state` | Baseline: other capabilities absent, no failed units, no capd warnings. `camera` is checked against ground truth, not assumed absent. It must be present if and only if some `/dev/video*` node is a capture node of a physical device: `/usr/lib/udev/v4l_id` run now reports `:capture:` (udev's database can be stale), the node isn't under `/sys/devices/virtual`, and no driver on it or a parent is `vivid` or `v4l2loopback` (`VIRTUAL_V4L_DRIVERS`); the script prints the matching nodes. So a connected webcam passes as present, and Aurora's "OBS Virtual Camera" (v4l2loopback) doesn't count, idle or streaming | Ready |
 | C-2 | `sudo ./capabilities.sh virt` | Nested virtualization on | **Blocked**: the option is unavailable while Hyper-V (VBS, WSL2, Credential Guard) is on in the host. The script skips until `/dev/kvm` exists |
 | C-3 | `sudo ./capabilities.sh hotplug-camera 10` | USB controller set to USB 3.1; the script prompts you to use *VM → Removable Devices → (webcam) → Connect / Disconnect* each cycle | Ready (interactive) |
 | C-4 | `sudo ./capabilities.sh hotplug-battery 10` | Uses the `test_power` module | **Likely skipped**: Fedora's kernel config has `# CONFIG_TEST_POWER is not set` (kernel-ark `common/generic`, no Fedora override). The script checks with `modinfo` and skips. Run C-4 on the laptop instead (unplug/replug isn't possible for an internal battery, so there it's a presence check plus a reboot with the battery reported) |
@@ -36,7 +36,8 @@ need the image booted in a VM.
 | C-9 | `sudo ./capabilities.sh bus-policy` | Any. Runs as `nobody`: List, Has, GetManagedObjects and Properties.GetAll succeed; Properties.Set is refused with AccessDenied. The CI bus is permissive, so this is the only check of the policy file | Ready |
 | C-8 | `sudo ./capabilities.sh mcelog` | Any; also run on the Ryzen desktop (§12 item 14) | Ready |
 
-`sudo ./capabilities.sh all` runs C-1, C-5 to C-13 (not the interactive ones) in one go.
+`sudo ./capabilities.sh all` runs C-1, C-5 to C-13, C-15 and C-17 (not the interactive ones)
+in one go.
 Exit codes: 0 pass, 1 fail, 77 skipped.
 
 With a webcam connected, check presence with `state --present camera`. With several
@@ -63,9 +64,27 @@ real recording.
 | C-13 | `sudo ./capabilities.sh vulkan-no-fake` | Manual start of the target is refused. Each probe is restarted 20 times: after each, the journal logs the target's start job as skipped by its condition and never a real "Reached target"; with the target and probes pinned (`Manager.RefUnit`, checked each round), it never entered active and `ConditionResult=no`; and `obscura-cap watch` never printed `+vulkan-1.3`. A probe for a nonexistent node never runs; the target's start job waits behind it, and cancelling the probe leaves the target inactive | Ready |
 | C-14 | `sudo ./capabilities.sh unplug` | Webcam passthrough, as C-3. Disconnect the webcam before starting (the test needs to see it appear). Builds a stand-in from the installed probe and target with `tests/lib/stand-in.sh` (only the names, the marker path, the device and the detection command change) bound to the webcam's video node (it waits up to 15 s after Connect for a new active/plugged `dev-video*.device`; only the webcam's capture node gets one. If none appears it prints the before/after lists, the exact listing command and its raw output); it must write its marker and activate the stand-in target, and disconnecting the webcam must stop the target within 5 s, marker gone, without a reboot. The VM can't have a qualifying GPU, so the real unplug is D-3 on the desktop | Ready (interactive) |
 
-The camera alternative to USB passthrough is the `vivid` virtual driver. Fedora builds it
-(`CONFIG_VIDEO_VIVID=m`), but it may live in a modules package Aurora doesn't install:
-check `modinfo vivid` in the VM.
+## Virtual cameras (task 0.2c)
+
+Build brief §6 (0.2c notes) and §7. Aurora loads v4l2loopback ("OBS Virtual Camera",
+`exclusive_caps=Y`). The producer is **ffmpeg**, already in the image:
+`ffmpeg -re -f lavfi -i testsrc2=size=640x480:rate=30 -pix_fmt yuyv422 -f v4l2 /dev/videoN`.
+While it runs, `v4l_id` reports the node as `:capture:`. v4l2loopback 0.15.4 sends no
+uevent when ffmpeg starts or stops, so the tests force one with
+`udevadm trigger --action=change` and report natural events without requiring them.
+
+| ID | Command | Setup | Status |
+|---|---|---|---|
+| **C-15** | `sudo ./capabilities.sh loopback` | Webcam disconnected (skips if a physical capture node exists or v4l2loopback isn't loaded). Streams into the loopback, then checks: after a change event udev's database has `:capture:` with no `systemd` tag and no `SYSTEMD_WANTS`; `camera` absent before, during and after the stream; C-1 passes while streaming; `rule_crosscheck.py` agrees; no real "Reached target obscura-cap-camera.target"; no `+camera` from `obscura-cap watch`. **On the 0.2b image this fails** (camera present after the change event): that's the bug, reproduced in the recon of 2026-11-24 | Passed on the 0.2c image (2026-11-24) |
+| C-16 | `sudo ./capabilities.sh loopback-webcam` | Webcam passthrough, as C-3. The script asks you to disconnect the webcam, streams into the loopback, then asks you to connect and disconnect it: present within 15 s with only the webcam in the ground truth, absent within 5 s, exactly one `+camera` and one `-camera`, the stream running throughout | Passed (interactive) on the 0.2c image (2026-11-24) |
+| C-17 | `sudo ./capabilities.sh rule-crosscheck` | Any; more useful with the webcam connected or vivid loaded. For each video node and for change and add events, `tests/lib/rule_crosscheck.py` triggers a real event, reads the database (CURRENT_TAGS, SYSTEMD_WANTS) and compares it with `tests/lib/udev_rules.py`'s verdict on the node recorded right after. `udevadm test` isn't used: on systemd 262 it skips `IMPORT{program}`, so `ID_V4L_CAPABILITIES` is never set | Passed on the 0.2c image (2026-11-24) |
+
+The camera alternative to USB passthrough is the `vivid` virtual driver: it's in the
+image (`sudo modprobe vivid`). It **must not** make `camera` present, since it's virtual
+(a platform device bound to `vivid`, excluded by the rule's `DRIVERS==` line), so it
+can't stand in for a webcam in C-3. Load it for C-17, then `sudo modprobe -r vivid`.
+
+To re-record the v4l fixtures, see `tests/fixtures/v4l/README.md`.
 
 # VM tests: pack format (task 0.21)
 

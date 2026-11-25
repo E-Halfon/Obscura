@@ -119,6 +119,13 @@ jobs:
               "/work/files/system/usr/lib/systemd/system/$unit"
           done
 
+      - name: Installed udev rules match the repo and pass udevadm verify
+        # On the image's own systemd (task 0.2c); the glob is expanded inside the container.
+        run: |
+          sudo podman exec gate sh -c 'udevadm verify --resolve-names=never /usr/lib/udev/rules.d/70-obscura-cap-*.rules'
+          sudo podman exec gate diff -u /usr/lib/udev/rules.d/70-obscura-cap-camera.rules \
+            /work/files/system/usr/lib/udev/rules.d/70-obscura-cap-camera.rules
+
       - name: Probed-capability gate on the image's systemd
         run: sudo podman exec gate bash /work/tests/ci/upholds-gate.sh --units /usr/lib/systemd/system
 

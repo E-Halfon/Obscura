@@ -328,7 +328,7 @@ accept drift. Shipping beats purity.
 | 0.1 | **Universal-image skeleton:** BlueBuild recipe on Universal Blue Aurora (`stable`), signed image builds, boots on the desktop | — | 3 |
 | 0.2 | **Capability module framework** (udev → systemd → DBus) — ✅ **done** (PR #2, 2026-11-22; open VM tests tracked in §7, "Stage 0 — capability framework") | 0.1 | 3 |
 | 0.2b | **Static capabilities:** `x86-64-v3` and `vulkan-1.3` (notes below the table). Needed for `pack-wine` to reach Ready — ✅ **done** (PR #5, 2026-11-24; open items in §7, "Stage 0 — static capabilities") | 0.2 | 2 |
-| 0.2c | **`camera` counts hardware only** (hardening: a streaming v4l2loopback node must not count; notes below the table) | 0.2 | 1 |
+| 0.2c | **`camera` counts hardware only** (a streaming v4l2loopback node must not count; notes below the table) — ✅ **done** (PR #7, 2026-11-24; results in §7, "Stage 0 — static capabilities") | 0.2 | 1 |
 | 0.3 | **KDE Plasma shell:** strip, theme, Windows-style layout | 0.1 | 2 |
 | 0.4 | Wine + binfmt_misc dispatch, `.exe` → window — **delivered as `pack-wine`** | 0.3, 0.21 | 3 |
 | 0.5 | Wine sandbox: bubblewrap, no-network default | 0.4 | 2 |
@@ -424,30 +424,55 @@ accept drift. Shipping beats purity.
   systemd-style: `vulkan-1.3` → `vulkan_2d1_2e3`, `x86-64-v3` → `x86_2d64_2dv3`.
 - **Tests:** §7, "Stage 0 — static capabilities (task 0.2b)".
 
-**0.2c notes: `camera` counts hardware only.** A hardening task: nothing fails today.
-Aurora ships v4l2loopback ("OBS Virtual Camera", `/dev/video0` under
-`/sys/devices/virtual/`). Idle, its node is output-only
-(`ID_V4L_CAPABILITIES=:video_output:`, no `systemd` tag, no `SYSTEMD_WANTS`), so
-`70-obscura-cap-camera.rules` doesn't match it and `camera` stays absent. The 0.2b VM pass
-confirmed this (2026-11-24): with the webcam disconnected, `obscura-cap-camera.target`
-was inactive and `has camera` printed absent. But with `exclusive_caps`, v4l2loopback
-switches the node to `:capture:` while a producer streams into it, and the rule also runs
-on `change` events. So a running OBS virtual camera would make `camera` present with no
-camera attached. After 0.2c the rule counts a node only if all of these hold:
-- it has the capture capability (`:capture:`);
-- its device path has no `/devices/virtual/` parent;
-- its driver isn't `v4l2loopback` or `vivid` (excluded by name, as a second line of
-  defence);
-- it isn't a metadata-only node (UVC's second node per camera, `:meta:` without
-  `:capture:`).
+**0.2c notes: `camera` counts hardware only.** Aurora ships v4l2loopback ("OBS Virtual
+Camera", `/dev/video0` under `/sys/devices/virtual/`, `exclusive_caps=Y`). Idle, its node
+is output-only (`ID_V4L_CAPABILITIES=:video_output:`), so the 0.2b rule didn't match it;
+the 0.2b VM pass confirmed `camera` absent with the webcam disconnected (2026-11-24). But
+while a producer streams into it, v4l_id reports `:capture:`, and the rule also runs on
+`change` events. **Confirmed in the VM recon (2026-11-24, 0.2b image, systemd 262,
+v4l2loopback 0.15.4):** with ffmpeg writing a test pattern into the loopback and the
+webcam disconnected, one change event (forced with `udevadm trigger`) tagged the node
+`systemd` with `SYSTEMD_WANTS=obscura-cap-camera.target`, and `has camera` printed
+present. Two more findings:
+- **No natural uevent.** v4l2loopback's source sends `KOBJ_CHANGE` on the writer's
+  STREAMON and STREAMOFF, but with 0.15.4 and ffmpeg's v4l2 output the monitor saw none:
+  the only change event was the forced one. The fix doesn't depend on one.
+- **Stale database.** After ffmpeg stopped, v4l_id reported `:video_output:` again, but
+  no event came, so udev's database kept `:capture:` and the systemd tag, and `camera`
+  stayed present with no stream at all.
+
+vivid is a platform device (`/sys/devices/platform/vivid.0`, capture node
+`:capture:audio:tuner:`), so it isn't under `/sys/devices/virtual` and the 0.2b rule
+counted it; C-1's ground truth ("not under /sys/devices/virtual (v4l2loopback, vivid)")
+was wrong about vivid. vivid is in the image (`modinfo vivid` resolves).
+
+After 0.2c the rule counts a node only if all of these hold (ARCHITECTURE.md §4, §11):
+- v4l_id reports `:capture:`, so metadata-only nodes (UVC's second node, `:`) never count;
+- its device is not under `/devices/virtual/` (keeps out v4l2loopback, which registers no
+  parent device);
+- neither it nor a parent is bound to `vivid` or `v4l2loopback` (`DRIVERS==`, which
+  searches the parent chain: this is what keeps out vivid, and a future loopback with a
+  parent).
+
+The rule runs on every add and change and decides from scratch; IR-only sensors count for
+now (§11 has the reason and the revisit trigger).
 
 Tests:
-- a udev-rule lint;
-- `udevadm test`-style unit tests with recorded property sets: a UVC capture node, its
-  metadata node, v4l2loopback in both `exclusive_caps` modes (idle and streaming), and
-  vivid;
-- VM test C-1 with the OBS virtual camera **running**, which needs `camera` absent. C-1
-  compares against the same ground truth as the rule (§7);
+- `tests/unit/test_camera_rule.py` runs the rule through `tests/lib/udev_rules.py`, an
+  evaluator for the subset of the rules language the capability rules use (parent keys on
+  one line must match the same device, as in udev). Scenarios from real recordings
+  (`tests/fixtures/v4l`: C920 capture and metadata nodes, the loopback idle, streaming and
+  with a stale database, vivid's nodes) and synthetic ones (exclusive_caps=0, a loopback
+  with a platform parent, an IPU6 CSI node, an IR-only sensor). The key negative test
+  reads the real streaming-loopback recording only. A mutation test deletes each exclusion
+  line and checks the scenario it guards then counts. Lints: never restricted to add,
+  exclusions before the tag, the driver list equal to the VM ground truth's;
+- `udevadm verify` on the rules, in `capd-tests` (systemd 255) and `gate-on-image` (262);
+- VM: C-1 with the new ground truth; C-15 (`loopback`) and C-16 (`loopback-webcam`) with
+  ffmpeg streaming into the loopback; C-17 (`rule-crosscheck`) checks the evaluator against
+  real udev on every node. `udevadm test` can't do that check: on systemd 262 it skips
+  `IMPORT{program}` ("Running in test mode, skipping execution of 'v4l_id'"), so it never
+  sets `ID_V4L_CAPABILITIES`; the cross-check triggers a real event and reads the database;
 - C-3: the webcam still counts.
 
 **Open decision: the OS updater.** Universal Blue's `uupd` updates the image, Flatpaks,
@@ -590,10 +615,12 @@ T-50 (one USB stick boots all three devices with correct capabilities and no fai
 also remains open until the hardware exists.
 
 **C-1's camera check uses ground truth.** C-1 doesn't assume there is no camera. `camera`
-must be present if and only if some `/dev/video*` node has `:capture:` in
-`ID_V4L_CAPABILITIES` and isn't under `/sys/devices/virtual`, and the script prints the
-matching nodes. The 0.2b VM pass failed C-1 because the C920 was connected, not because of
-v4l2loopback.
+must be present if and only if some `/dev/video*` node is a capture node of a physical
+device, by the rule's criteria read independently of udev (task 0.2c): `v4l_id` run now
+reports `:capture:` (not udev's database, which can be stale), the node isn't under
+`/sys/devices/virtual`, and no driver on it or a parent is `vivid` or `v4l2loopback`. The
+script prints the matching nodes. The 0.2b VM pass failed C-1 because the C920 was
+connected, not because of v4l2loopback.
 
 ### Stage 0 — pack format (task 0.21)
 
@@ -652,6 +679,9 @@ start at C-10).
 | **C-12** | **lavapipe doesn't count** | lavapipe reports Vulkan ≥ 1.3, yet `vulkan-1.3` is absent, and never was this boot: this boot's journal (by boot ID) logs at least one start of the target, every one skipped by its condition and none a real "Reached target", and capd never announced it (`ActiveEnterTimestamp` 0 is reported as a secondary note); each render-node probe is skipped (`exec-condition`) with a logged reason and no accept marker; no failed units. The same run records `real-vmware-lavapipe-*` with `capture.py`; the CI negative test reads only that recording (committed 2026-11-24) |
 | C-13 | Can't be faked | Manual start of the target refused; for each of 20 restarts of each probe, the journal logs the target's start job as skipped by its condition and never a real "Reached target"; with the units pinned, the properties agree (`ConditionResult=no`, never active); `obscura-cap watch` sees no `+vulkan-1.3`; a probe for a nonexistent node never runs, and the target's start job waits behind it instead of starting |
 | C-14 | Unplug, no reboot (mechanism) | A stand-in of the probe and target (`tests/lib/stand-in.sh`), bound to the webcam, writes its marker and activates the target, then stops within 5 s of unplugging, marker gone |
+| **C-15** | **A streaming virtual camera doesn't count** (task 0.2c) | Webcam disconnected; ffmpeg writes a test pattern into the v4l2loopback node until v4l_id reports `:capture:`. Natural change events are reported, not required. After a forced change event udev's database has `:capture:` but no `systemd` tag and no `SYSTEMD_WANTS`; `camera` absent and its target inactive before, during and after the stream; C-1 passes while streaming; the evaluator agrees with udev; no real "Reached target obscura-cap-camera.target" in the journal; no `+camera`. Fails on the 0.2b image (the bug) |
+| C-16 | Loopback and webcam (task 0.2c) | Interactive. With the loopback streaming throughout: absent with the webcam disconnected; connecting it makes `camera` present within 15 s and the ground truth lists only the webcam; disconnecting makes it absent within 5 s; exactly one `+camera` and one `-camera` |
+| C-17 | Evaluator vs real udev (task 0.2c) | For every video node, change and add events: `tests/lib/rule_crosscheck.py` triggers a real event and compares the database (CURRENT_TAGS, SYSTEMD_WANTS) with `tests/lib/udev_rules.py`'s verdict on the node recorded just after; all agree |
 | P-2 | pack-wine on the VM (after 0.2b) | Insufficient hardware, `vulkan-1.3` absent rather than unknown |
 | D-1 | Desktop: both present | `x86-64-v3` and `vulkan-1.3` present; pack-wine Ready |
 | D-2 | Desktop: recordings | `capture.py` recordings of the real GPUs committed as `real-*` |
@@ -668,7 +698,29 @@ run in VMware Workstation:
 CI was green on that commit: `capd-tests`, and `bluebuild` including `gate-on-image` on
 systemd 262.
 
-**Open items** (they stay open after 0.2b is marked done):
+**Result (2026-11-24).** Task 0.2c passed on the branch image, built from `6454270`
+(tag `6454270-45`) and run in VMware Workstation with the C920 passed through and Aurora's
+v4l2loopback ("OBS Virtual Camera"):
+- C-15 `loopback` on the **0.2b image** (before the fix): failed as intended. After a
+  forced change event while ffmpeg streamed, and after ffmpeg stopped (v4l_id
+  `:video_output:`, udev db still `:capture:`, 0 natural change events), `camera` was
+  present, its target active, the journal had a real "Reached target
+  obscura-cap-camera.target", and capd announced `Added(camera)` once;
+- `capabilities.sh all` on the 0.2c image (C-1, C-5 to C-13, C-15, C-17): all checks
+  passed, 0 skipped;
+- C-16 `loopback-webcam`: `camera` absent while streaming with the webcam disconnected;
+  present 95 ms after Connect, with only `/dev/video1` in the ground truth; the evaluator
+  agreed with udev on video0, video1 and video2; absent 105 ms after Disconnect with the
+  stream still running; exactly one `Added` and one `Removed`;
+- C-14 `unplug`: all checks passed.
+
+C-3 (`hotplug-camera`) wasn't part of this pass; C-16 and C-14 covered connecting and
+disconnecting the webcam on this image. On `6454270`, `bluebuild` including
+`gate-on-image` (with `udevadm verify` on systemd 262) was green; `capd-tests` passed the
+unit tests and `udevadm verify` (systemd 255) but failed shellcheck (SC2120, the new
+`test_state` call in C-15), fixed in the commit that marks 0.2c done.
+
+**Open items** (they stay open after 0.2b and 0.2c are marked done):
 - **vulkan-1.3 present on real recordings** (RADV/ANV, discrete + integrated). Synthetic
   fixtures don't count. Open until D-2 records them with `capture.py` (a Fedora live USB
   works); until then `test_present_on_real_hardware` skips. If a real recording on
@@ -678,7 +730,8 @@ systemd 262.
   probe's `DeviceAllow=char-drm` blocks, so it reads absent (fails safe). NVK needs only
   DRM. Decide when the desktop GPU is chosen: allow `char-nvidia*`, or require NVK.
 - **D-1 to D-3** need the desktop (with T-50).
-- **Task 0.2c:** `camera` must not count a streaming v4l2loopback node (§6, 0.2c notes).
+- **IR-only cameras count as `camera`** (task 0.2c, ARCHITECTURE.md §11). Revisit if a
+  target device's only capture nodes are IR, or a pack needs colour video.
 - **The OS-updater decision** (§6, "Open decision: the OS updater"). Until it's made,
   test VMs disable `uupd.timer`.
 - **CI and image systemd versions differ:** the runner has 255 (Ubuntu 24.04) and the
